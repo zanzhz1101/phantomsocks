@@ -536,9 +536,15 @@ func LoadConfig(filename string) error {
 									if hasCache {
 										r := result.(*DNSRecords)
 										if r.A != nil {
+											if records.A == nil {
+												records.A = new(RecordAddresses)
+											}
 											records.A.Addresses = append(records.A.Addresses, r.A.Addresses...)
 										}
 										if r.AAAA != nil {
+											if records.AAAA == nil {
+												records.AAAA = new(RecordAddresses)
+											}
 											records.AAAA.Addresses = append(records.AAAA.Addresses, r.AAAA.Addresses...)
 										}
 									} else {

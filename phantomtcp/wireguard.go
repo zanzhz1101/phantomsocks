@@ -1,3 +1,4 @@
+//go:build wireguard
 // +build wireguard
 
 package phantomtcp
@@ -183,7 +184,7 @@ func (config WireGuardServiceConfig) StartService() {
 
 var TNetMap map[string]*netstack.Net
 
-func (config *WireGuardInterfaceConfig) StartClient() error {
+func (config WireGuardInterfaceConfig) StartClient() error {
 	var addrs []netip.Addr
 	for _, addr := range strings.Split(config.Address, ",") {
 		prefix, err := netip.ParsePrefix(addr)
@@ -200,16 +201,16 @@ func (config *WireGuardInterfaceConfig) StartClient() error {
 	return err
 }
 
-func (pface *WireGuardInterface) DialTCP(address *net.TCPAddr) (net.Conn, error){
+func (pface *WireGuardInterface) DialTCP(address *net.TCPAddr) (net.Conn, error) {
 	tnet, ok := TNetMap[pface.Device]
 	if ok {
 		return tnet.DialTCP(address)
 	}
-	
+
 	return nil, nil
 }
 
-func (pface *WireGuardInterface) DialUDP(address *net.UDPAddr) (net.Conn, error){
+func (pface *WireGuardInterface) DialUDP(address *net.UDPAddr) (net.Conn, error) {
 	tnet, ok := TNetMap[pface.Device]
 	if ok {
 		return tnet.DialUDP(nil, address)

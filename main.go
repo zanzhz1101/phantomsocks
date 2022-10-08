@@ -104,6 +104,8 @@ func DNSServer(listenAddr string) error {
 	defer conn.Close()
 
 	fmt.Println("DNS:", listenAddr)
+	go ListenAndServe(listenAddr, ptcp.DNSTCPServer)
+
 	data := make([]byte, 512)
 	for {
 		n, clientAddr, err := conn.ReadFromUDP(data)
@@ -202,7 +204,8 @@ func StartService() {
 			go ptcp.TProxyUDP(service.Address)
 		case "wireguard":
 			fmt.Println("WireGuard:", service.Address)
-			go ptcp.WireGuardServer(service)
+			wgService := ptcp.WireGuardServiceConfig{service}
+			go wgService.StartService()
 		case "pac":
 			if default_socks != "" {
 				go PACServer(service.Address, default_socks)

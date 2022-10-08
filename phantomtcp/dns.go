@@ -1098,3 +1098,19 @@ func (server *PhantomInterface) ResolveTCPAddrs(host string, port int) ([]*net.T
 
 	return tcpAddrs, nil
 }
+
+func DNSTCPServer(client net.Conn) {
+	data := make([]byte, 2048)
+	n, err := client.Read(data)
+	if err != nil {
+		return
+	}
+	request := make([]byte, n-2)
+	copy(request, data[:n-2])
+
+	_, response := NSRequest(request, true)
+	responseLen := len(response)
+	binary.BigEndian.PutUint16(data[:2], uint16(responseLen))
+	copy(data[2:], response)
+	client.Write(data[:responseLen+2])
+}

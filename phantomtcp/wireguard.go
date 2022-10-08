@@ -20,26 +20,26 @@ import (
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
-func WireGuardServer(service ServiceConfig) {
+func (config WireGuardServiceConfig) StartService() {
 	var wgIPMap [65535]bool
 
-	laddr, err := net.ResolveUDPAddr("udp", service.Address)
+	laddr, err := net.ResolveUDPAddr("udp", config.Address)
 	if err != nil {
-		logPrintln(0, service, err)
+		logPrintln(0, config, err)
 	}
 
 	vaddr := [4]byte{VirtualAddrPrefix, 0, 0, 0}
 	prefix := netip.PrefixFrom(netip.AddrFrom4(vaddr), 32)
-	tun, tnet, err := StartWireguard([]netip.Addr{prefix.Addr()}, laddr.Port, nil, service.MTU, service.PrivateKey, service.Peers)
+	tun, tnet, err := StartWireguard([]netip.Addr{prefix.Addr()}, laddr.Port, nil, config.MTU, config.PrivateKey, config.Peers)
 	if err != nil {
-		logPrintln(0, service, err)
+		logPrintln(0, config, err)
 	}
 
 	tcp_redirect := func(laddr string) {
 		addr, err := net.ResolveTCPAddr("tcp", laddr)
 		l, err := tnet.ListenTCP(addr)
 		if err != nil {
-			logPrintln(0, service, err)
+			logPrintln(0, config, err)
 		}
 		for {
 			client, err := l.Accept()
@@ -53,7 +53,7 @@ func WireGuardServer(service ServiceConfig) {
 		}
 	}
 
-	udp_redirect := func(address, host string, server *PhantomInterface) error {
+	udp_redirect := func(address, host string, pface *PhantomInterface) error {
 		laddr, err := net.ResolveUDPAddr("udp", address)
 		if err != nil {
 			return err
@@ -81,15 +81,15 @@ func WireGuardServer(service ServiceConfig) {
 				udpLock.Unlock()
 			} else {
 				udpLock.Unlock()
-				if server.Hint&OPT_UDP == 0 && server.Hint&(OPT_HTTP3) != 0 {
+				if pface.Hint&OPT_UDP == 0 && pface.Hint&(OPT_HTTP3) != 0 {
 					if GetQUICVersion(data[:n]) == 0 {
 						logPrintln(4, "Wiregurad(UDP):", srcAddr, "->", laddr, "not h3")
 						continue
 					}
 				}
 
-				logPrintln(1, "Wiregurad(UDP):", srcAddr, "->", host, laddr.Port, server)
-				remoteConn, proxyConn, err := server.DialUDP(host, laddr.Port)
+				logPrintln(1, "Wiregurad(UDP):", srcAddr, "->", host, laddr.Port, pface)
+				remoteConn, proxyConn, err := pface.DialUDPProxy(host, laddr.Port)
 				if err != nil {
 					logPrintln(1, err)
 					continue
@@ -98,7 +98,7 @@ func WireGuardServer(service ServiceConfig) {
 				udpMap[srcAddr.String()] = remoteConn
 				udpLock.Unlock()
 
-				if server.Hint&OPT_ZERO != 0 {
+				if pface.Hint&OPT_ZERO != 0 {
 					zero_data := make([]byte, 8+rand.Intn(1024))
 					_, err = remoteConn.Write(zero_data)
 					if err != nil {
@@ -152,7 +152,7 @@ func WireGuardServer(service ServiceConfig) {
 	wgIPMap[0] = true
 	l, err := tnet.ListenUDPAddrPort(netip.AddrPortFrom(netip.AddrFrom4(vaddr), 53))
 	if err != nil {
-		logPrintln(0, service, err)
+		logPrintln(0, config, err)
 	}
 
 	var buf [512]byte
@@ -170,10 +170,10 @@ func WireGuardServer(service ServiceConfig) {
 			netstack.AddAddress(tun, prefix.Addr())
 			wgIPMap[index] = true
 			host := Nose[index]
-			server := ConfigLookup(host)
-			if server.Hint&(OPT_UDP|OPT_HTTP3) != 0 {
+			pface := ConfigLookup(host)
+			if pface.Hint&(OPT_UDP|OPT_HTTP3) != 0 {
 				dst := net.JoinHostPort(prefix.Addr().String(), "443")
-				go udp_redirect(dst, host, server)
+				go udp_redirect(dst, host, pface)
 			}
 		}
 
@@ -183,9 +183,9 @@ func WireGuardServer(service ServiceConfig) {
 
 var TNetMap map[string]*netstack.Net
 
-func WireGuardClient(client InterfaceConfig) error {
+func (config *WireGuardInterfaceConfig) StartClient() error {
 	var addrs []netip.Addr
-	for _, addr := range strings.Split(client.Address, ",") {
+	for _, addr := range strings.Split(config.Address, ",") {
 		prefix, err := netip.ParsePrefix(addr)
 		if err != nil {
 			logPrintln(0, addr, err)
@@ -193,15 +193,15 @@ func WireGuardClient(client InterfaceConfig) error {
 		}
 		addrs = append(addrs, prefix.Addr())
 	}
-	_, tnet, err := StartWireguard(addrs, 0, nil, int(client.MTU), client.PrivateKey, client.Peers)
+	_, tnet, err := StartWireguard(addrs, 0, nil, int(config.MTU), config.PrivateKey, config.Peers)
 	if err == nil {
-		TNetMap[client.Name] = tnet
+		TNetMap[config.Name] = tnet
 	}
 	return err
 }
 
-func WireGuardDialTCP(device string, address *net.TCPAddr) (net.Conn, error){
-	tnet, ok := TNetMap[device]
+func (pface *WireGuardInterface) DialTCP(address *net.TCPAddr) (net.Conn, error){
+	tnet, ok := TNetMap[pface.Device]
 	if ok {
 		return tnet.DialTCP(address)
 	}
@@ -209,8 +209,8 @@ func WireGuardDialTCP(device string, address *net.TCPAddr) (net.Conn, error){
 	return nil, nil
 }
 
-func WireGuardDialUDP(device string, address *net.UDPAddr) (net.Conn, error){
-	tnet, ok := TNetMap[device]
+func (pface *WireGuardInterface) DialUDP(address *net.UDPAddr) (net.Conn, error){
+	tnet, ok := TNetMap[pface.Device]
 	if ok {
 		return tnet.DialUDP(nil, address)
 	}

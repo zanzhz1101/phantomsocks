@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"time"
+	"unsafe"
 )
 
 func ComputeUDPChecksum(buffer []byte) uint16 {
@@ -77,8 +78,8 @@ func relayUDP(left, right net.Conn) error {
 	return err
 }
 
-func (server *PhantomInterface) DialUDP(host string, port int) (net.Conn, net.Conn, error) {
-	raddrs, err := server.GetRemoteAddresses(host, port)
+func (pface *PhantomInterface) DialUDPProxy(host string, port int) (net.Conn, net.Conn, error) {
+	raddrs, err := pface.GetRemoteAddresses(host, port)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -87,15 +88,15 @@ func (server *PhantomInterface) DialUDP(host string, port int) (net.Conn, net.Co
 	proxy_err := errors.New("invalid proxy")
 	var tcpConn net.Conn = nil
 
-	switch server.Protocol {
+	switch pface.Protocol {
 	case DIRECT:
 		fallthrough
 	case REDIRECT:
 		fallthrough
 	case NAT64:
 		var laddr *net.UDPAddr = nil
-		if server.Device != "" {
-			_laddr, err := GetLocalAddr(server.Device, raddr.IP.To4() == nil)
+		if pface.Device != "" {
+			_laddr, err := GetLocalAddr(pface.Device, raddr.IP.To4() == nil)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -108,14 +109,14 @@ func (server *PhantomInterface) DialUDP(host string, port int) (net.Conn, net.Co
 		var synpacket *ConnectionInfo
 		var hint uint32 = 0
 
-		laddr, err := GetLocalAddr(server.Device, raddr.IP.To4() == nil)
+		laddr, err := GetLocalAddr(pface.Device, raddr.IP.To4() == nil)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		hint = server.Hint & OPT_MODIFY
+		hint = pface.Hint & OPT_MODIFY
 		if hint != 0 {
-			tcpConn, synpacket, err = DialConnInfo(laddr, raddr, server, nil)
+			tcpConn, synpacket, err = DialConnInfo(laddr, raddr, pface, nil)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -136,7 +137,7 @@ func (server *PhantomInterface) DialUDP(host string, port int) (net.Conn, net.Co
 
 		var b [264]byte
 		if hint != 0 {
-			err := ModifyAndSendPacket(synpacket, b[:], hint, server.TTL, 2)
+			err := ModifyAndSendPacket(synpacket, b[:], hint, pface.TTL, 2)
 			if err != nil {
 				tcpConn.Close()
 				return nil, nil, err
@@ -195,7 +196,8 @@ func (server *PhantomInterface) DialUDP(host string, port int) (net.Conn, net.Co
 		udpConn, err := net.DialUDP("udp", nil, &udpAddr)
 		return udpConn, tcpConn, err
 	case WIREGUARD:
-		udpConn, err := WireGuardDialUDP(server.Device, &net.UDPAddr{IP: raddr.IP, Port: raddr.Port})
+		wgface := (*WireGuardInterface)(unsafe.Pointer(pface))
+		udpConn, err := wgface.DialUDP(&net.UDPAddr{IP: raddr.IP, Port: raddr.Port})
 		return udpConn, nil, err
 	}
 

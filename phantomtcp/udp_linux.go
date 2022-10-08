@@ -53,9 +53,9 @@ func TProxyUDP(address string) {
 			continue
 		}
 
-		server := ConfigLookup(host)
-		if server.Hint&OPT_UDP == 0 {
-			if server.Hint&(OPT_HTTP3) == 0 {
+		pface := ConfigLookup(host)
+		if pface.Hint&OPT_UDP == 0 {
+			if pface.Hint&(OPT_HTTP3) == 0 {
 				logPrintln(4, "TProxy(UDP):", srcAddr, "->", dstAddr, "not allow")
 				continue
 			}
@@ -65,7 +65,7 @@ func TProxyUDP(address string) {
 			}
 		}
 
-		logPrintln(1, "TProxy(UDP):", srcAddr, "->", host, dstAddr.Port, server)
+		logPrintln(1, "TProxy(UDP):", srcAddr, "->", host, dstAddr.Port, pface)
 
 		localConn, err := tproxy.DialUDP("udp", dstAddr, srcAddr)
 		if err != nil {
@@ -73,7 +73,7 @@ func TProxyUDP(address string) {
 			continue
 		}
 
-		remoteConn, proxyConn, err := server.DialUDP(host, dstAddr.Port)
+		remoteConn, proxyConn, err := pface.DialUDPProxy(host, dstAddr.Port)
 		if err != nil {
 			logPrintln(1, err)
 			localConn.Close()
@@ -83,7 +83,7 @@ func TProxyUDP(address string) {
 			continue
 		}
 
-		if server.Hint&OPT_ZERO != 0 {
+		if pface.Hint&OPT_ZERO != 0 {
 			zero_data := make([]byte, 8+rand.Intn(1024))
 			_, err = remoteConn.Write(zero_data)
 			if err != nil {

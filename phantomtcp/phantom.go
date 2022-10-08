@@ -72,6 +72,18 @@ type PhantomInterface struct {
 	Address  string
 }
 
+type WireGuardServiceConfig struct {
+	ServiceConfig
+}
+
+type WireGuardInterfaceConfig struct {
+	InterfaceConfig
+}
+
+type WireGuardInterface struct {
+	PhantomInterface
+}
+
 var DomainMap map[string]*PhantomInterface
 var DefaultInterface *PhantomInterface = nil
 
@@ -417,8 +429,8 @@ func HttpMove(conn net.Conn, host string, b []byte) bool {
 	return true
 }
 
-func (server *PhantomInterface) DialStrip(host string, fronting string) (*tls.Conn, error) {
-	addr, err := server.ResolveTCPAddr(host, 443)
+func (pface *PhantomInterface) DialStrip(host string, fronting string) (*tls.Conn, error) {
+	addr, err := pface.ResolveTCPAddr(host, 443)
 	if err != nil {
 		return nil, err
 	}
@@ -721,9 +733,9 @@ func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 	}
 
 	var devices []string
-	for _, config := range Interfaces {
+	for _, pface := range Interfaces {
 		var Hint uint32 = OPT_NONE
-		for _, h := range strings.Split(config.Hint, ",") {
+		for _, h := range strings.Split(pface.Hint, ",") {
 			if h != "" {
 				hint, ok := HintMap[h]
 				if ok {
@@ -734,21 +746,21 @@ func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 			}
 		}
 
-		if config.Protocol == "wireguard" {
-			err := WireGuardClient(config)
+		if pface.Protocol == "wireguard" {
+			err := WireGuardInterfaceConfig{pface}.StartClient()
 			if err != nil {
-				logPrintln(0, config, err)
+				logPrintln(0, pface, err)
 				continue
 			}
-			InterfaceMap[config.Name] = PhantomInterface{
-				Device:   config.Name,
-				DNS:      config.DNS,
+			InterfaceMap[pface.Name] = PhantomInterface{
+				Device:   pface.Name,
+				DNS:      pface.DNS,
 				Hint:     Hint,
 				Protocol: WIREGUARD,
 			}
 		} else {
 			var protocol byte
-			switch config.Protocol {
+			switch pface.Protocol {
 			case "direct":
 				protocol = DIRECT
 			case "redirect":
@@ -767,23 +779,23 @@ func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 				protocol = SOCKS5
 			}
 
-			_, ok := InterfaceMap[config.Device]
+			_, ok := InterfaceMap[pface.Device]
 			if !ok {
-				if config.Device != "" && Hint != 0 && !contains(devices, config.Device) {
-					devices = append(devices, config.Device)
+				if pface.Device != "" && Hint != 0 && !contains(devices, pface.Device) {
+					devices = append(devices, pface.Device)
 				}
 			}
 
-			InterfaceMap[config.Name] = PhantomInterface{
-				Device: config.Device,
-				DNS:    config.DNS,
+			InterfaceMap[pface.Name] = PhantomInterface{
+				Device: pface.Device,
+				DNS:    pface.DNS,
 				Hint:   Hint,
-				MTU:    uint16(config.MTU),
-				TTL:    byte(config.TTL),
-				MAXTTL: byte(config.MAXTTL),
+				MTU:    uint16(pface.MTU),
+				TTL:    byte(pface.TTL),
+				MAXTTL: byte(pface.MAXTTL),
 
 				Protocol: protocol,
-				Address:  config.Address,
+				Address:  pface.Address,
 			}
 		}
 	}

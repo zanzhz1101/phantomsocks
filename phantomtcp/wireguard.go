@@ -182,7 +182,7 @@ func (config WireGuardServiceConfig) StartService() {
 	}
 }
 
-var TNetMap map[string]*netstack.Net
+var TNetMap = make(map[string]*netstack.Net)
 
 func (config WireGuardInterfaceConfig) StartClient() error {
 	var addrs []netip.Addr

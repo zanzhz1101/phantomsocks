@@ -116,6 +116,9 @@ func GetOriginalDST(conn *net.TCPConn) (*net.TCPAddr, error) {
 
 	LocalAddr := conn.LocalAddr()
 	LocalTCPAddr, err := net.ResolveTCPAddr(LocalAddr.Network(), LocalAddr.String())
+	if err != nil {
+		return nil, err
+	}
 
 	if LocalTCPAddr.IP.To4() == nil {
 		mtuinfo, err := syscall.GetsockoptIPv6MTUInfo(int(file.Fd()), syscall.IPPROTO_IPV6, IP6T_SO_ORIGINAL_DST)

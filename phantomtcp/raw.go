@@ -1,5 +1,5 @@
-// +build linux
-// +build rawsocket
+//go:build linux && rawsocket
+// +build linux,rawsocket
 
 package phantomtcp
 
@@ -13,6 +13,42 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 )
+
+var HintMap = map[string]uint32{
+	"none":   OPT_NONE,
+	"ttl":    OPT_TTL,
+	"mss":    OPT_MSS,
+	"w-md5":  OPT_WMD5,
+	"n-ack":  OPT_NACK,
+	"w-ack":  OPT_WACK,
+	"w-csum": OPT_WCSUM,
+	"w-seq":  OPT_WSEQ,
+
+	"udp":    OPT_UDP,
+	"no-tcp": OPT_NOTCP,
+	"delay":  OPT_DELAY,
+
+	"mode2":      OPT_MODE2,
+	"df":         OPT_DF,
+	"sat":        OPT_SAT,
+	"rand":       OPT_RAND,
+	"s-seg":      OPT_SSEG,
+	"1-seg":      OPT_1SEG,
+	"half-tfo":   OPT_HTFO,
+	"keep-alive": OPT_KEEPALIVE,
+	"synx2":      OPT_SYNX2,
+	"zero":       OPT_ZERO,
+
+	"http":     OPT_HTTP,
+	"https":    OPT_HTTPS,
+	"h3":       OPT_HTTP3,
+	"move":     OPT_MOVE,
+	"strip":    OPT_STRIP,
+	"fronting": OPT_FRONTING,
+
+	"ipv4": OPT_IPV4,
+	"ipv6": OPT_IPV6,
+}
 
 func DevicePrint() {
 }

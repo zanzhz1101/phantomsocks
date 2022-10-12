@@ -1,5 +1,5 @@
-// +build !linux
-// +build pcap
+//go:build !linux && pcap
+// +build !linux,pcap
 
 package phantomtcp
 

@@ -1112,7 +1112,7 @@ func DNSTCPServer(client net.Conn) {
 		return
 	}
 	request := make([]byte, requestLen)
-	copy(request, data[2:requestLen])
+	copy(request, data[2:requestLen+2])
 
 	_, response := NSRequest(request, true)
 	responseLen := len(response)

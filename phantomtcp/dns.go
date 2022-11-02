@@ -607,16 +607,17 @@ func (records DNSRecords) BuildResponse(request []byte, qtype int, ttl uint32) [
 			binary.BigEndian.PutUint16(response[6:], 1)
 		case 28:
 			return response[:length]
-
-			answer := []byte{0xC0, 0x0C, 0x00, 28,
-				0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10,
-				0x00, 0x64, 0xff, VirtualAddrPrefix, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00}
-			copy(response[length:], answer)
-			length += 24
-			binary.BigEndian.PutUint32(response[length:], uint32(records.Index))
-			length += 4
-			binary.BigEndian.PutUint16(response[6:], 1)
+			/*
+				answer := []byte{0xC0, 0x0C, 0x00, 28,
+					0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10,
+					0x00, 0x64, 0xff, VirtualAddrPrefix, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00}
+				copy(response[length:], answer)
+				length += 24
+				binary.BigEndian.PutUint32(response[length:], uint32(records.Index))
+				length += 4
+				binary.BigEndian.PutUint16(response[6:], 1)
+			*/
 		case 65:
 			copy(response[length:], []byte{0xC0, 0x0C, 0x00, 65, 0, 1, 0, 0, 0, 16, 0, 0, 0, 1, 0})
 			dataLenOffset := length + 10
@@ -676,10 +677,12 @@ func PackQName(name string) []byte {
 }
 
 type ServerOptions struct {
-	ECS    string
-	Type   string
-	PD     string
-	Domain string
+	ECS       string
+	Type      string
+	PD        string
+	Domain    string
+	BadSubnet *net.IPNet
+	Fallback  net.IP
 }
 
 func ParseOptions(options string) ServerOptions {
@@ -697,6 +700,10 @@ func ParseOptions(options string) ServerOptions {
 				serverOpts.Type = key[1]
 			case "domain":
 				serverOpts.Domain = key[1]
+			case "badsubnet":
+				_, serverOpts.BadSubnet, _ = net.ParseCIDR(key[1])
+			case "fallback":
+				serverOpts.Fallback = net.ParseIP(key[1])
 			}
 		}
 	}
@@ -1037,29 +1044,57 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 		return 0, nil
 	}
 
-	if records.Index == 0 && (records.Hint != 0 || server.Protocol != 0) {
-		NoseLock.Lock()
-		records.Index = len(Nose)
-		Nose = append(Nose, name)
-		NoseLock.Unlock()
-	}
 	answer := getAnswers(response)
-	if answer == nil {
-		logPrintln(4, "request:", name, "no answer")
-		return 0, records.BuildResponse(request, qtype, 0)
-	}
+	if answer != nil {
+		if options.BadSubnet != nil {
+			for i := 0; i < len(answer.Addresses); {
+				address := answer.Addresses[i]
+				if options.BadSubnet.Contains(address) {
+					logPrintln(4, address, "bad address")
+					answer.Addresses = append(answer.Addresses[:i], answer.Addresses[i+1:]...)
+					continue
+				}
+				i++
+			}
+		}
 
-	if options.PD != "" {
-		for i, ip := range answer.Addresses {
-			answer.Addresses[i] = net.ParseIP(options.PD + ip.String())
+		if options.PD != "" {
+			for i, ip := range answer.Addresses {
+				answer.Addresses[i] = net.ParseIP(options.PD + ip.String())
+			}
+		}
+
+		if len(answer.Addresses) == 0 {
+			answer = nil
 		}
 	}
-	logPrintln(3, "response:", name, qtype, answer.Addresses)
+
+	if answer == nil {
+		if options.Fallback != nil {
+			logPrintln(4, "request:", name, "fallback", options.Fallback)
+			answer = &RecordAddresses{0, []net.IP{options.Fallback}}
+		}
+	}
+
 	switch qtype {
 	case 1:
 		records.A = answer
 	case 28:
 		records.AAAA = answer
+	}
+
+	if answer == nil {
+		logPrintln(4, "request:", name, "no answer")
+		return 0, records.BuildResponse(request, qtype, 0)
+	}
+
+	logPrintln(3, "response:", name, qtype, answer.Addresses)
+
+	if records.Index == 0 && (records.Hint != 0 || server.Protocol != 0) {
+		NoseLock.Lock()
+		records.Index = len(Nose)
+		Nose = append(Nose, name)
+		NoseLock.Unlock()
 	}
 
 	return records.Index, records.BuildResponse(request, qtype, 0)

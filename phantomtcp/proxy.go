@@ -750,18 +750,3 @@ func SocksUDPProxy(address string) {
 		}
 	}
 }
-
-func (config ServiceConfig) StartService() {
-}
-
-func (config InterfaceConfig) StartClient() error {
-	return nil
-}
-
-func (pface *PhantomInterface) DialTCP(address *net.TCPAddr) (net.Conn, error) {
-	return nil, nil
-}
-
-func (pface *PhantomInterface) DialUDP(address *net.UDPAddr) (net.Conn, error) {
-	return nil, nil
-}

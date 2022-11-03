@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"net"
 	"time"
-	"unsafe"
 )
 
 func ComputeUDPChecksum(buffer []byte) uint16 {
@@ -195,10 +194,6 @@ func (pface *PhantomInterface) DialUDPProxy(host string, port int) (net.Conn, ne
 		}
 		udpConn, err := net.DialUDP("udp", nil, &udpAddr)
 		return udpConn, tcpConn, err
-	case WIREGUARD:
-		wgface := (*WireGuardInterface)(unsafe.Pointer(pface))
-		udpConn, err := wgface.DialUDP(&net.UDPAddr{IP: raddr.IP, Port: raddr.Port})
-		return udpConn, nil, err
 	}
 
 	return nil, nil, proxy_err

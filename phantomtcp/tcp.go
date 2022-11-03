@@ -14,7 +14,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -153,20 +152,6 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 	}
 
 	var conn net.Conn
-	if pface.Protocol == WIREGUARD {
-		wgface := (*WireGuardInterface)(unsafe.Pointer(pface))
-		conn, err = wgface.DialTCP(raddrs[rand.Intn(len(raddrs))])
-		if err != nil {
-			return nil, nil, err
-		}
-		
-		if b != nil {
-			_, err = conn.Write(b)
-		}
-		
-		return conn, nil, err
-	}
-
 	device := pface.Device
 	offset := 0
 	length := 0
@@ -451,11 +436,6 @@ func (server *PhantomInterface) GetRemoteAddresses(host string, port int) ([]*ne
 			tcpAddrs[i] = &net.TCPAddr{IP: net.ParseIP(proxy), Port: port}
 		}
 		return tcpAddrs, nil
-	case WIREGUARD:
-		if server.DNS == "" {
-			return nil, nil
-		}
-		return server.ResolveTCPAddrs(host, port)
 	default:
 		host, str_port, err := net.SplitHostPort(server.Address)
 		if err != nil {
@@ -661,7 +641,6 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 				return proxy_err
 			}
 		}
-	case WIREGUARD:
 	default:
 		return proxy_err
 	}

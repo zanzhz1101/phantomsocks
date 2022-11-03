@@ -50,14 +50,13 @@ type Peer struct {
 }
 
 const (
-	DIRECT    = 0x0
-	REDIRECT  = 0x1
-	NAT64     = 0x2
-	HTTP      = 0x3
-	HTTPS     = 0x4
-	SOCKS4    = 0x5
-	SOCKS5    = 0x6
-	WIREGUARD = 0x7
+	DIRECT   = 0x0
+	REDIRECT = 0x1
+	NAT64    = 0x2
+	HTTP     = 0x3
+	HTTPS    = 0x4
+	SOCKS4   = 0x5
+	SOCKS5   = 0x6
 )
 
 type PhantomInterface struct {
@@ -70,18 +69,6 @@ type PhantomInterface struct {
 
 	Protocol byte
 	Address  string
-}
-
-type WireGuardServiceConfig struct {
-	ServiceConfig
-}
-
-type WireGuardInterfaceConfig struct {
-	InterfaceConfig
-}
-
-type WireGuardInterface struct {
-	PhantomInterface
 }
 
 var DomainMap map[string]*PhantomInterface
@@ -714,57 +701,43 @@ func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 			}
 		}
 
-		if pface.Protocol == "wireguard" {
-			err := WireGuardInterfaceConfig{pface}.StartClient()
-			if err != nil {
-				logPrintln(0, pface, err)
-				continue
-			}
-			InterfaceMap[pface.Name] = PhantomInterface{
-				Device:   pface.Name,
-				DNS:      pface.DNS,
-				Hint:     Hint,
-				Protocol: WIREGUARD,
-			}
-		} else {
-			var protocol byte
-			switch pface.Protocol {
-			case "direct":
-				protocol = DIRECT
-			case "redirect":
-				protocol = REDIRECT
-			case "nat64":
-				protocol = NAT64
-			case "http":
-				protocol = HTTP
-			case "https":
-				protocol = HTTPS
-			case "socks4":
-				protocol = SOCKS4
-			case "socks5":
-				protocol = SOCKS5
-			case "socks":
-				protocol = SOCKS5
-			}
+		var protocol byte
+		switch pface.Protocol {
+		case "direct":
+			protocol = DIRECT
+		case "redirect":
+			protocol = REDIRECT
+		case "nat64":
+			protocol = NAT64
+		case "http":
+			protocol = HTTP
+		case "https":
+			protocol = HTTPS
+		case "socks4":
+			protocol = SOCKS4
+		case "socks5":
+			protocol = SOCKS5
+		case "socks":
+			protocol = SOCKS5
+		}
 
-			_, ok := InterfaceMap[pface.Device]
-			if !ok {
-				if pface.Device != "" && Hint != 0 && !contains(devices, pface.Device) {
-					devices = append(devices, pface.Device)
-				}
+		_, ok := InterfaceMap[pface.Device]
+		if !ok {
+			if pface.Device != "" && Hint != 0 && !contains(devices, pface.Device) {
+				devices = append(devices, pface.Device)
 			}
+		}
 
-			InterfaceMap[pface.Name] = PhantomInterface{
-				Device: pface.Device,
-				DNS:    pface.DNS,
-				Hint:   Hint,
-				MTU:    uint16(pface.MTU),
-				TTL:    byte(pface.TTL),
-				MAXTTL: byte(pface.MAXTTL),
+		InterfaceMap[pface.Name] = PhantomInterface{
+			Device: pface.Device,
+			DNS:    pface.DNS,
+			Hint:   Hint,
+			MTU:    uint16(pface.MTU),
+			TTL:    byte(pface.TTL),
+			MAXTTL: byte(pface.MAXTTL),
 
-				Protocol: protocol,
-				Address:  pface.Address,
-			}
+			Protocol: protocol,
+			Address:  pface.Address,
 		}
 	}
 	logPrintln(1, InterfaceMap)

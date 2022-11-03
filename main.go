@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -191,6 +192,15 @@ func StartService() {
 		switch service.Protocol {
 		case "dns":
 			go DNSServer(service.Address)
+		case "doh":
+			fmt.Println("DoH:", service.Address)
+			go func() {
+				http.HandleFunc("/dns-query", ptcp.DoHServer)
+				err := http.ListenAndServeTLS(service.Address, "cert.pem", "key.pem", nil)
+				if err != nil {
+					fmt.Println("DoH:", err)
+				}
+			}()
 		case "socks":
 			fmt.Println("Socks:", service.Address)
 			go ListenAndServe(service.Address, ptcp.SocksProxy)
@@ -202,10 +212,6 @@ func StartService() {
 		case "tproxy":
 			fmt.Println("TProxy:", service.Address)
 			go ptcp.TProxyUDP(service.Address)
-		case "wireguard":
-			fmt.Println("WireGuard:", service.Address)
-			wgService := ptcp.WireGuardServiceConfig{service}
-			go wgService.StartService()
 		case "pac":
 			if default_socks != "" {
 				go PACServer(service.Address, default_socks)

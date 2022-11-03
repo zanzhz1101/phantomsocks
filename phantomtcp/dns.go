@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -918,7 +919,9 @@ func NSLookup(name string, hint uint32, server string) (int, []net.IP) {
 }
 
 func NSRequest(request []byte, cache bool) (int, []byte) {
-	name, qtype, _ := GetQName(request)
+	name, qtype, end := GetQName(request)
+	binary.BigEndian.PutUint16(request[10:12], 0)
+	request = request[:end]
 	if name == "" {
 		logPrintln(2, "DNS Segmentation fault")
 		return 0, nil
@@ -1137,8 +1140,8 @@ func (server *PhantomInterface) ResolveTCPAddrs(host string, port int) ([]*net.T
 func DNSTCPServer(client net.Conn) {
 	defer client.Close()
 
-	data := make([]byte, 2048)
-	n, err := client.Read(data)
+	var data [2048]byte
+	n, err := client.Read(data[:])
 	if err != nil {
 		return
 	}
@@ -1154,4 +1157,17 @@ func DNSTCPServer(client net.Conn) {
 	binary.BigEndian.PutUint16(data[:2], uint16(responseLen))
 	copy(data[2:], response)
 	client.Write(data[:responseLen+2])
+}
+
+func DoHServer(w http.ResponseWriter, req *http.Request) {
+	var data [2048]byte
+	n, err := req.Body.Read(data[:])
+	if err != nil {
+		return
+	}
+	request := data[:n]
+	_, response := NSRequest(request, true)
+
+	w.Header().Set("Content-Type", "application/dns-message")
+	w.Write(response)
 }

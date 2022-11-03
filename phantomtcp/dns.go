@@ -27,6 +27,7 @@ type DNSRecords struct {
 	Hint  uint
 	A     *RecordAddresses
 	AAAA  *RecordAddresses
+	Echo  []byte
 }
 
 var DNSMinTTL uint32 = 0
@@ -522,44 +523,25 @@ func getAnswers(response []byte) *RecordAddresses {
 }
 
 func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
-	totalLen := 0
-	count := 0
-	var ips []net.IP
-	switch qtype {
-	case 1:
-		if records.A == nil {
-			return 0, nil
-		}
-		ips = records.A.Addresses
-	case 28:
-		if records.AAAA == nil {
-			return 0, nil
-		}
-		ips = records.AAAA.Addresses
-	case 65:
-		return 0, nil
-	}
-	for _, ip := range ips {
-		ip4 := ip.To4()
-		if ip4 != nil {
-			if qtype == 1 {
+	packA := func(ips []net.IP) (int, []byte) {
+		count := 0
+		totalLen := 0
+		for _, ip := range ips {
+			ip4 := ip.To4()
+			if ip4 != nil {
 				count++
 				totalLen += 16
-			}
-		} else {
-			if qtype == 28 {
+			} else {
 				count++
 				totalLen += 28
 			}
 		}
-	}
 
-	answers := make([]byte, totalLen)
-	length := 0
-	for _, ip := range ips {
-		ip4 := ip.To4()
-		if ip4 != nil {
-			if qtype == 1 {
+		answers := make([]byte, totalLen)
+		length := 0
+		for _, ip := range ips {
+			ip4 := ip.To4()
+			if ip4 != nil {
 				copy(answers[length:], []byte{0xC0, 0x0C, 0x00, 1,
 					0x00, 0x01})
 				length += 6
@@ -569,9 +551,7 @@ func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
 				length += 2
 				copy(answers[length:], ip4)
 				length += 4
-			}
-		} else {
-			if qtype == 28 {
+			} else {
 				copy(answers[length:], []byte{0xC0, 0x0C, 0x00, 28,
 					0x00, 0x01})
 				length += 6
@@ -583,9 +563,117 @@ func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
 				length += 16
 			}
 		}
+
+		return count, answers
 	}
 
-	return count, answers
+	switch qtype {
+	case 1:
+		if records.A == nil {
+			return 0, nil
+		}
+		return packA(records.A.Addresses)
+	case 28:
+		if records.AAAA == nil {
+			return 0, nil
+		}
+		return packA(records.AAAA.Addresses)
+	case 65:
+		var totalLen uint16 = 15
+
+		if records.Hint&(OPT_HTTPS|OPT_HTTP3) != 0 {
+			totalLen += 4
+			if records.Hint&OPT_HTTP3 != 0 {
+				totalLen += 3
+			}
+			if records.Hint&OPT_HTTPS != 0 {
+				totalLen += 3
+			}
+		}
+
+		echoLen := len(records.Echo)
+		if echoLen > 0 {
+			totalLen += uint16(4 + echoLen)
+		}
+
+		v4Count := 0
+		if records.A != nil {
+			v4Count = len(records.A.Addresses)
+			totalLen += uint16(4 + v4Count*4)
+		}
+		v6Count := 0
+		if records.AAAA != nil {
+			v6Count = len(records.AAAA.Addresses)
+			totalLen += uint16(4 + v6Count*16)
+		}
+
+		if totalLen == 15 {
+			return 0, nil
+		}
+
+		answers := make([]byte, totalLen)
+		copy(answers, []byte{0xC0, 0x0C, 0x00, 65, 0x00, 0x01})
+		binary.BigEndian.PutUint32(answers[6:], ttl)
+		binary.BigEndian.PutUint16(answers[10:], totalLen-12)
+		binary.BigEndian.PutUint16(answers[12:], 1)
+		answers[14] = 0
+		length := 15
+
+		if records.Hint&(OPT_HTTPS|OPT_HTTP3) != 0 {
+			copy(answers[length:], []byte{0, 1, 0, 0})
+			svcLenOffset := length + 2
+			length += 4
+			if records.Hint&OPT_HTTP3 != 0 {
+				copy(answers[length:], []byte{2, 0x68, 0x33})
+				length += 3
+			}
+			if records.Hint&OPT_HTTPS != 0 {
+				copy(answers[length:], []byte{2, 0x68, 0x32})
+				length += 3
+			}
+			binary.BigEndian.PutUint16(answers[svcLenOffset:], uint16(length-svcLenOffset-2))
+		}
+
+		if echoLen > 0 {
+			copy(answers[length:], []byte{0, 5})
+			length += 2
+			binary.BigEndian.PutUint16(answers[length:], uint16(echoLen))
+			length += 2
+			copy(answers[length:], records.Echo)
+			length += echoLen
+		}
+
+		if records.A != nil {
+			copy(answers[length:], []byte{0, 4})
+			length += 2
+			binary.BigEndian.PutUint16(answers[length:], uint16(v4Count*4))
+			length += 2
+			for _, ip := range records.A.Addresses {
+				ip4 := ip.To4()
+				if ip4 == nil {
+					logPrintln(1, ip, "not IPv4")
+					return 0, nil
+				}
+				copy(answers[length:], ip4)
+				length += 4
+			}
+		}
+
+		if records.AAAA != nil {
+			copy(answers[length:], []byte{0, 6})
+			length += 2
+			binary.BigEndian.PutUint16(answers[length:], uint16(v6Count*16))
+			length += 2
+			for _, ip := range records.AAAA.Addresses {
+				copy(answers[length:], ip.To16())
+				length += 16
+			}
+		}
+
+		return 1, answers
+	}
+
+	return 0, nil
 }
 
 func (records DNSRecords) BuildResponse(request []byte, qtype int, ttl uint32) []byte {

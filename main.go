@@ -191,16 +191,21 @@ func StartService() {
 	for _, service := range ServiceConfig.Services {
 		switch service.Protocol {
 		case "dns":
-			go DNSServer(service.Address)
+			go func(addr string) {
+				err := DNSServer(addr)
+				if err != nil {
+					fmt.Println("DNS:", err)
+				}
+			}(service.Address)
 		case "doh":
-			fmt.Println("DoH:", service.Address)
-			go func() {
+			go func(addr string) {
+				fmt.Println("DoH:", addr)
 				http.HandleFunc("/dns-query", ptcp.DoHServer)
-				err := http.ListenAndServeTLS(service.Address, "cert.pem", "key.pem", nil)
+				err := http.ListenAndServeTLS(addr, "cert.pem", "key.pem", nil)
 				if err != nil {
 					fmt.Println("DoH:", err)
 				}
-			}()
+			}(service.Address)
 		case "socks":
 			fmt.Println("Socks:", service.Address)
 			go ListenAndServe(service.Address, ptcp.SocksProxy)

@@ -437,73 +437,106 @@ func GetNameOffset(response []byte, offset int) int {
 	return offset
 }
 
-func getAnswers(response []byte) *RecordAddresses {
+func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
+	nsfilter := func(address net.IP) net.IP {
+		if options.BadSubnet != nil {
+			if options.BadSubnet.Contains(address) {
+				logPrintln(4, address, "bad address")
+				return nil
+			}
+		}
+
+		if options.PD != "" {
+			address = net.ParseIP(options.PD + address.String())
+		}
+
+		return address
+	}
+
 	responseLen := len(response)
 
 	offset := 12
 	if offset > responseLen {
-		return nil
+		return
 	}
 
 	QDCount := int(binary.BigEndian.Uint16(response[4:6]))
 	ANCount := int(binary.BigEndian.Uint16(response[6:8]))
 
 	if ANCount == 0 {
-		return &RecordAddresses{0, nil}
+		return
 	}
 
 	for i := 0; i < QDCount; i++ {
 		_offset := GetNameOffset(response, offset)
 		if _offset == 0 {
-			return nil
+			return
 		}
 		offset = _offset + 4
 	}
 
-	var ips []net.IP
-	var ttl uint32 = 65535
 	cname := ""
 	for i := 0; i < ANCount; i++ {
 		_offset := GetNameOffset(response, offset)
 		if _offset == 0 {
-			return nil
+			return
 		}
 		offset = _offset
 		if offset+2 > responseLen {
-			return nil
+			return
 		}
 		AType := binary.BigEndian.Uint16(response[offset : offset+2])
 		offset += 4
 		if offset+4 > responseLen {
-			return nil
+			return
 		}
 		TTL := binary.BigEndian.Uint32(response[offset : offset+4])
-		if TTL < ttl {
-			ttl = TTL
+		if TTL < DNSMinTTL {
+			TTL = DNSMinTTL
 		}
+
 		offset += 4
 		if offset+2 > responseLen {
-			return nil
+			return
 		}
 		DataLength := binary.BigEndian.Uint16(response[offset : offset+2])
 		offset += 2
 
-		if AType == 1 {
+		switch AType {
+		case 1:
 			if offset+4 > responseLen {
-				return nil
+				return
 			}
 			data := response[offset : offset+4]
 			ip := net.IPv4(data[0], data[1], data[2], data[3])
-			ips = append(ips, ip)
-		} else if AType == 28 {
+			ip = nsfilter(ip).To4()
+			if ip == nil {
+				continue
+			}
+			if records.A == nil {
+				records.A = &RecordAddresses{int64(TTL) + time.Now().Unix(), []net.IP{ip}}
+			} else {
+				records.A.Addresses = append(records.A.Addresses, ip)
+			}
+		case 28 :
 			var data [16]byte
 			if offset+16 > responseLen {
-				return nil
+				return
 			}
 			copy(data[:], response[offset:offset+16])
 			ip := net.IP(response[offset : offset+16])
-			ips = append(ips, ip)
-		} else if AType == 5 {
+			ip = nsfilter(ip)
+			if ip == nil {
+				continue
+			}
+			if records.AAAA == nil {
+				records.AAAA = &RecordAddresses{int64(TTL) + time.Now().Unix(), []net.IP{ip}}
+			} else {
+				records.AAAA.Addresses = append(records.AAAA.Addresses, ip)
+			}
+		case 65:
+			logPrintln(4, "HTTPS:", response[offset:])
+		case 5:
 			cname, _ = GetName(response, offset)
 			logPrintln(4, "CNAME:", cname)
 		}
@@ -511,15 +544,7 @@ func getAnswers(response []byte) *RecordAddresses {
 		offset += int(DataLength)
 	}
 
-	//if len(ips) == 0 && cname != "" {
-	//	_, ips = NSLookup(cname, qtype)
-	//}
-
-	if ttl < DNSMinTTL {
-		ttl = DNSMinTTL
-	}
-
-	return &RecordAddresses{int64(ttl) + time.Now().Unix(), ips}
+	return 
 }
 
 func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
@@ -985,25 +1010,35 @@ func NSLookup(name string, hint uint32, server string) (int, []net.IP) {
 		NoseLock.Unlock()
 	}
 
-	answer := getAnswers(response)
-	if answer == nil {
-		return records.Index, nil
-	}
+	records.GetAnswers(response, options)
 
-	if options.PD != "" {
-		for i, ip := range answer.Addresses {
-			answer.Addresses[i] = net.ParseIP(options.PD + ip.String())
-		}
-	}
-	logPrintln(3, "nslookup", name, qtype, answer.Addresses)
 	switch qtype {
 	case 1:
-		records.A = answer
+		if records.A == nil && options.Fallback != nil {
+			if options.Fallback.To4() != nil {
+				logPrintln(4, "request:", name, "fallback", options.Fallback)
+				records.A = &RecordAddresses{0, []net.IP{options.Fallback}}
+			}
+		}
+		if records.A == nil {
+			records.A = &RecordAddresses{0, []net.IP{}}
+		}
+		logPrintln(3, "nslookup", name, qtype, records.A.Addresses)
+		return records.Index, records.A.Addresses
 	case 28:
-		records.AAAA = answer
+		if records.AAAA == nil && options.Fallback != nil {
+			if options.Fallback.To4() == nil {
+				records.AAAA = &RecordAddresses{0, []net.IP{options.Fallback}}
+			}
+		}
+		if records.AAAA == nil {
+			records.AAAA = &RecordAddresses{0, []net.IP{}}
+		}
+		logPrintln(3, "nslookup", name, qtype, records.AAAA.Addresses)
+		return records.Index, records.AAAA.Addresses
 	}
 
-	return records.Index, answer.Addresses
+	return records.Index, nil
 }
 
 func NSRequest(request []byte, cache bool) (int, []byte) {
@@ -1051,13 +1086,9 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 			return records.Index, records.BuildResponse(request, qtype, 0)
 		}
 	case 65:
-		if records.Index == 0 && records.Hint&OPT_UDP != 0 {
-			NoseLock.Lock()
-			records.Index = len(Nose)
-			Nose = append(Nose, name)
-			NoseLock.Unlock()
+		if records.Hint & (OPT_HTTP3 | OPT_HTTPS | OPT_UDP) != 0 {
+			return records.Index, records.BuildResponse(request, qtype, 3600)
 		}
-		return records.Index, records.BuildResponse(request, qtype, 3600)
 	default:
 		return records.Index, records.BuildResponse(request, qtype, 3600)
 	}
@@ -1069,7 +1100,7 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 	var options ServerOptions
 	DNS := ""
 	if server != nil {
-		records.Hint = uint(server.Hint)
+		records.Hint = uint(server.Hint) & OPT_DNS
 		logPrintln(2, "request:", name, server.DNS, server.Protocol)
 		DNS = server.DNS
 	} else {
@@ -1135,53 +1166,38 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 		return 0, nil
 	}
 
-	answer := getAnswers(response)
-	if answer != nil {
-		if options.BadSubnet != nil {
-			for i := 0; i < len(answer.Addresses); {
-				address := answer.Addresses[i]
-				if options.BadSubnet.Contains(address) {
-					logPrintln(4, address, "bad address")
-					answer.Addresses = append(answer.Addresses[:i], answer.Addresses[i+1:]...)
-					continue
-				}
-				i++
-			}
-		}
-
-		if options.PD != "" {
-			for i, ip := range answer.Addresses {
-				answer.Addresses[i] = net.ParseIP(options.PD + ip.String())
-			}
-		}
-
-		if len(answer.Addresses) == 0 {
-			answer = nil
-		}
-	}
-
-	if answer == nil {
-		if options.Fallback != nil {
-			logPrintln(4, "request:", name, "fallback", options.Fallback)
-			answer = &RecordAddresses{0, []net.IP{options.Fallback}}
-		}
-	}
+	records.GetAnswers(response, options)
 
 	switch qtype {
 	case 1:
-		records.A = answer
+		if records.A == nil && options.Fallback != nil {
+			if options.Fallback.To4() != nil {
+				logPrintln(4, "request:", name, "fallback", options.Fallback)
+				records.A = &RecordAddresses{0, []net.IP{options.Fallback}}
+			}
+		}
+		if records.A == nil {
+			logPrintln(4, "request:", name, "no answer")
+			records.A = &RecordAddresses{0, []net.IP{}}
+			return 0, records.BuildResponse(request, qtype, 0)
+		}
+		logPrintln(3, "response:", name, qtype, records.A.Addresses)
 	case 28:
-		records.AAAA = answer
+		if records.AAAA == nil && options.Fallback != nil {
+			if options.Fallback.To4() == nil {
+				logPrintln(4, "request:", name, "fallback", options.Fallback)
+				records.AAAA = &RecordAddresses{0, []net.IP{options.Fallback}}
+			}
+		}
+		if records.AAAA == nil {
+			logPrintln(4, "request:", name, "no answer")
+			records.AAAA = &RecordAddresses{0, []net.IP{}}
+			return 0, records.BuildResponse(request, qtype, 0)
+		}
+		logPrintln(3, "response:", name, qtype, records.AAAA.Addresses)
 	}
 
-	if answer == nil {
-		logPrintln(4, "request:", name, "no answer")
-		return 0, records.BuildResponse(request, qtype, 0)
-	}
-
-	logPrintln(3, "response:", name, qtype, answer.Addresses)
-
-	if records.Index == 0 && (records.Hint != 0 || server.Protocol != 0) {
+	if records.Index == 0 && ((server.Hint & OPT_MODIFY) != 0 || server.Protocol != 0) {
 		NoseLock.Lock()
 		records.Index = len(Nose)
 		Nose = append(Nose, name)

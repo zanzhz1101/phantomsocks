@@ -27,7 +27,7 @@ type DNSRecords struct {
 	Hint  uint
 	A     *RecordAddresses
 	AAAA  *RecordAddresses
-	Echo  []byte
+	Ech   []byte
 }
 
 var DNSMinTTL uint32 = 0
@@ -518,7 +518,7 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 			} else {
 				records.A.Addresses = append(records.A.Addresses, ip)
 			}
-		case 28 :
+		case 28:
 			var data [16]byte
 			if offset+16 > responseLen {
 				return
@@ -535,7 +535,57 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 				records.AAAA.Addresses = append(records.AAAA.Addresses, ip)
 			}
 		case 65:
-			logPrintln(4, "HTTPS:", response[offset:])
+			offset += 3
+			for offset+4 < responseLen {
+				SvcParamKey := binary.BigEndian.Uint16(response[offset : offset+2])
+				offset += 2
+				SvcParamLen := int(binary.BigEndian.Uint16(response[offset : offset+2]))
+				offset += 2
+				SvcParamEnd := offset + SvcParamLen
+				if SvcParamEnd > responseLen {
+					break
+				}
+				switch SvcParamKey {
+				case 1:
+					for offset+1 < SvcParamEnd {
+						ALPNLen := int(response[offset])
+						offset++
+						if offset+ALPNLen > SvcParamEnd {
+							break
+						}
+						ALPN := string(response[offset : offset+ALPNLen])
+						offset += ALPNLen
+						switch ALPN {
+						case "http/1.1":
+							records.Hint |= OPT_HTTP
+						case "h2":
+							records.Hint |= OPT_HTTPS
+						case "h3":
+							records.Hint |= OPT_HTTP3
+						}
+					}
+				case 4:
+					var IPv4Hint []net.IP
+					for offset < SvcParamEnd {
+						data := response[offset : offset+4]
+						IPv4Hint = append(IPv4Hint, net.IPv4(data[0], data[1], data[2], data[3]))
+						offset += 4
+					}
+					records.A = &RecordAddresses{int64(TTL) + time.Now().Unix(), IPv4Hint}
+				case 5:
+					records.Ech = make([]byte, SvcParamLen)
+					copy(records.Ech, response[offset:SvcParamEnd])
+				case 6:
+					var IPv6Hint []net.IP
+					for offset < SvcParamEnd {
+						ip := net.IP(response[offset : offset+16])
+						IPv6Hint = append(IPv6Hint, ip)
+						offset += 16
+					}
+					records.AAAA = &RecordAddresses{int64(TTL) + time.Now().Unix(), IPv6Hint}
+				}
+				offset = SvcParamEnd
+			}
 		case 5:
 			cname, _ = GetName(response, offset)
 			logPrintln(4, "CNAME:", cname)
@@ -544,7 +594,7 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 		offset += int(DataLength)
 	}
 
-	return 
+	return
 }
 
 func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
@@ -616,16 +666,17 @@ func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
 			}
 		}
 
-		echoLen := len(records.Echo)
-		if echoLen > 0 {
-			totalLen += uint16(4 + echoLen)
-		}
-
 		v4Count := 0
 		if records.A != nil {
 			v4Count = len(records.A.Addresses)
 			totalLen += uint16(4 + v4Count*4)
 		}
+
+		echoLen := len(records.Ech)
+		if echoLen > 0 {
+			totalLen += uint16(4 + echoLen)
+		}
+
 		v6Count := 0
 		if records.AAAA != nil {
 			v6Count = len(records.AAAA.Addresses)
@@ -659,15 +710,6 @@ func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
 			binary.BigEndian.PutUint16(answers[svcLenOffset:], uint16(length-svcLenOffset-2))
 		}
 
-		if echoLen > 0 {
-			copy(answers[length:], []byte{0, 5})
-			length += 2
-			binary.BigEndian.PutUint16(answers[length:], uint16(echoLen))
-			length += 2
-			copy(answers[length:], records.Echo)
-			length += echoLen
-		}
-
 		if records.A != nil {
 			copy(answers[length:], []byte{0, 4})
 			length += 2
@@ -682,6 +724,15 @@ func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
 				copy(answers[length:], ip4)
 				length += 4
 			}
+		}
+
+		if echoLen > 0 {
+			copy(answers[length:], []byte{0, 5})
+			length += 2
+			binary.BigEndian.PutUint16(answers[length:], uint16(echoLen))
+			length += 2
+			copy(answers[length:], records.Ech)
+			length += echoLen
 		}
 
 		if records.AAAA != nil {
@@ -1086,7 +1137,7 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 			return records.Index, records.BuildResponse(request, qtype, 0)
 		}
 	case 65:
-		if records.Hint & (OPT_HTTP3 | OPT_HTTPS | OPT_UDP) != 0 {
+		if records.Hint&(OPT_HTTP3|OPT_HTTPS|OPT_UDP) != 0 {
 			return records.Index, records.BuildResponse(request, qtype, 3600)
 		}
 	default:
@@ -1197,7 +1248,7 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 		logPrintln(3, "response:", name, qtype, records.AAAA.Addresses)
 	}
 
-	if records.Index == 0 && ((server.Hint & OPT_MODIFY) != 0 || server.Protocol != 0) {
+	if records.Index == 0 && ((server.Hint&OPT_MODIFY) != 0 || server.Protocol != 0) {
 		NoseLock.Lock()
 		records.Index = len(Nose)
 		Nose = append(Nose, name)

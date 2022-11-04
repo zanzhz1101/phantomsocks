@@ -597,7 +597,7 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 	return
 }
 
-func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
+func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 	packA := func(ips []net.IP) (int, []byte) {
 		count := 0
 		totalLen := 0
@@ -669,7 +669,9 @@ func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
 		v4Count := 0
 		if records.A != nil {
 			v4Count = len(records.A.Addresses)
-			totalLen += uint16(4 + v4Count*4)
+			if v4Count > 0 {
+				totalLen += uint16(4 + v4Count*4)
+			}
 		}
 
 		echoLen := len(records.Ech)
@@ -680,7 +682,9 @@ func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
 		v6Count := 0
 		if records.AAAA != nil {
 			v6Count = len(records.AAAA.Addresses)
-			totalLen += uint16(4 + v6Count*16)
+			if v6Count > 0 {
+				totalLen += uint16(4 + v6Count*16)
+			}
 		}
 
 		if totalLen == 15 {
@@ -710,7 +714,7 @@ func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
 			binary.BigEndian.PutUint16(answers[svcLenOffset:], uint16(length-svcLenOffset-2))
 		}
 
-		if records.A != nil {
+		if v4Count > 0 {
 			copy(answers[length:], []byte{0, 4})
 			length += 2
 			binary.BigEndian.PutUint16(answers[length:], uint16(v4Count*4))
@@ -735,7 +739,7 @@ func packAnswers(qtype int, ttl uint32, records DNSRecords) (int, []byte) {
 			length += echoLen
 		}
 
-		if records.AAAA != nil {
+		if v6Count > 0 {
 			copy(answers[length:], []byte{0, 6})
 			length += 2
 			binary.BigEndian.PutUint16(answers[length:], uint16(v6Count*16))
@@ -811,7 +815,7 @@ func (records DNSRecords) BuildResponse(request []byte, qtype int, ttl uint32) [
 			binary.BigEndian.PutUint16(response[dataLenOffset:], uint16(length-dataLenOffset-2))
 		}
 	} else {
-		count, answer := packAnswers(qtype, ttl, records)
+		count, answer := records.PackAnswers(qtype, ttl)
 		if count > 0 {
 			binary.BigEndian.PutUint16(response[6:], uint16(count))
 			copy(response[length:], answer)

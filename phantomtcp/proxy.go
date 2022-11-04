@@ -20,7 +20,7 @@ func SocksProxy(client net.Conn) {
 	defer client.Close()
 
 	var conn net.Conn
-	var server *PhantomInterface
+	var server *PhantomInterface = nil
 	{
 		var b [1500]byte
 		n, err := client.Read(b[:])
@@ -292,248 +292,169 @@ func splitHostPort(hostport string) (host string, port int) {
 func SNIProxy(client net.Conn) {
 	defer client.Close()
 
-	var conn net.Conn
-	{
-		var b [1500]byte
-		n, err := client.Read(b[:])
-		if err != nil {
-			log.Println(err)
-			return
-		}
-
-		var host string
-		var port int
-		if b[0] == 0x16 {
-			offset, length := GetSNI(b[:n])
-			if length == 0 {
-				return
-			}
-			host = string(b[offset : offset+length])
-			port = 443
-		} else {
-			offset, length := GetHost(b[:n])
-			if length == 0 {
-				return
-			}
-			host = string(b[offset : offset+length])
-			portstart := strings.Index(host, ":")
-			if portstart == -1 {
-				port = 80
-			} else {
-				port, err = strconv.Atoi(host[portstart+1:])
-				if err != nil {
-					return
-				}
-				host = host[:portstart]
-			}
-			if net.ParseIP(host) != nil {
-				return
-			}
-		}
-
-		server := ConfigLookup(host)
-		if server == nil {
-			return
-		}
-		if server.Hint != 0 {
-			logPrintln(1, "SNI:", host, port, server)
-
-			if b[0] == 0x16 {
-				conn, _, err = server.Dial(host, port, b[:n])
-				if err != nil {
-					logPrintln(1, host, err)
-					return
-				}
-			} else {
-				if server.Hint&OPT_HTTP3 != 0 {
-					HttpMove(client, "h3", b[:n])
-					return
-				} else if server.Hint&OPT_HTTPS != 0 {
-					HttpMove(client, "https", b[:n])
-					return
-				} else if server.Hint&OPT_MOVE != 0 {
-					HttpMove(client, server.Address, b[:n])
-					return
-				} else if server.Hint&OPT_STRIP != 0 {
-					if server.Hint&OPT_FRONTING != 0 {
-						conn, err = server.DialStrip(host, "")
-						host = ""
-					} else {
-						conn, err = server.DialStrip(host, host)
-					}
-
-					if err != nil {
-						logPrintln(1, err)
-						return
-					}
-					_, err = conn.Write(b[:n])
-					if err != nil {
-						logPrintln(1, err)
-						return
-					}
-				} else {
-					var info *ConnectionInfo
-					conn, info, err = server.Dial(host, port, b[:n])
-					if err != nil {
-						logPrintln(1, host, err)
-						return
-					}
-
-					if info != nil {
-						server.Keep(client, conn, info)
-						return
-					}
-				}
-			}
-		} else {
-			host = net.JoinHostPort(host, strconv.Itoa(port))
-			logPrintln(1, host)
-
-			conn, err = net.Dial("tcp", host)
-			if err != nil {
-				logPrintln(1, err)
-				return
-			}
-			_, err = conn.Write(b[:n])
-			if err != nil {
-				logPrintln(1, err)
-				return
-			}
-		}
-	}
-
-	defer conn.Close()
-
-	_, _, err := relay(client, conn)
+	var b [1460]byte
+	n, err := client.Read(b[:])
 	if err != nil {
-		if err, ok := err.(net.Error); ok && err.Timeout() {
+		log.Println(err)
+		return
+	}
+
+	var host string
+	var port int
+	if b[0] == 0x16 {
+		offset, length := GetSNI(b[:n])
+		if length == 0 {
 			return
 		}
-		logPrintln(1, "relay error:", err)
+		host = string(b[offset : offset+length])
+		port = 443
+	} else {
+		offset, length := GetHost(b[:n])
+		if length == 0 {
+			return
+		}
+		host = string(b[offset : offset+length])
+		portstart := strings.Index(host, ":")
+		if portstart == -1 {
+			port = 80
+		} else {
+			port, err = strconv.Atoi(host[portstart+1:])
+			if err != nil {
+				return
+			}
+			host = host[:portstart]
+		}
+		if net.ParseIP(host) != nil {
+			return
+		}
 	}
+
+	tcp_redirect(client, &net.TCPAddr{Port: port}, host, b[:])
 }
 
 func RedirectProxy(client net.Conn) {
 	addr, err := GetOriginalDST(client.(*net.TCPConn))
 	if err != nil {
-		logPrintln(1, err)
 		client.Close()
+		logPrintln(1, err)
 		return
 	}
 
-	redirect(client, addr)
+	if addr.String() == client.LocalAddr().String() {
+		client.Close()
+		return
+	}
+	tcp_redirect(client, addr, "", nil)
 }
 
-func redirect(client net.Conn, addr *net.TCPAddr) {
+func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []byte) {
 	defer client.Close()
 
 	var conn net.Conn
 	var err error
 	{
-		var host string
 		var port int
-		var ips []net.IP = nil
-
-		switch addr.IP[0] {
-		case 0x00:
-			index := int(binary.BigEndian.Uint32(addr.IP[12:16]))
-			if index >= len(Nose) {
-				return
+		if domain == "" {
+			switch addr.IP[0] {
+			case 0x00:
+				index := int(binary.BigEndian.Uint32(addr.IP[12:16]))
+				if index >= len(Nose) {
+					return
+				}
+				domain = Nose[index]
+			case VirtualAddrPrefix:
+				index := int(binary.BigEndian.Uint16(addr.IP[2:4]))
+				if index >= len(Nose) {
+					return
+				}
+				domain = Nose[index]
 			}
-			host = Nose[index]
-		case VirtualAddrPrefix:
-			index := int(binary.BigEndian.Uint16(addr.IP[2:4]))
-			if index >= len(Nose) {
-				return
-			}
-			host = Nose[index]
-		default:
-			if addr.String() == client.LocalAddr().String() {
-				return
-			}
-			host = addr.IP.String()
-			ips = []net.IP{addr.IP}
 		}
 		port = addr.Port
 
-		server := ConfigLookup(host)
-		if server.Hint&OPT_NOTCP != 0 {
+		pface := ConfigLookup(domain)
+		if pface.Hint&OPT_NOTCP != 0 {
 			time.Sleep(time.Second)
 			return
 		}
 
-		if server.Protocol != 0 || server.Hint != 0 {
-			var b [1500]byte
-			n, err := client.Read(b[:])
-			if err != nil {
-				logPrintln(1, err)
-				return
-			}
-
-			if b[0] == 0x16 {
-				offset, length := GetSNI(b[:n])
-				if length > 0 {
-					host = string(b[offset : offset+length])
-					server = ConfigLookup(host)
-				}
-
-				logPrintln(1, "Redirect:", client.RemoteAddr(), "->", host, port, server)
-				if server == nil {
+		if domain != "" || pface.Protocol != 0 || pface.Hint != 0 {
+			if header == nil {
+				b := make([]byte, 1460)
+				n, err := client.Read(b)
+				if err != nil {
+					logPrintln(1, err)
 					return
 				}
+				header = b[:n]
+			}
 
-				conn, _, err = server.Dial(host, port, b[:n])
+			if header[0] == 0x16 {
+				offset, length := GetSNI(header)
+				if length > 0 {
+					_domain := string(header[offset : offset+length])
+					if domain != _domain {
+						pface = ConfigLookup(domain)
+						if pface == nil {
+							return
+						}
+					}
+				}
+
+				logPrintln(1, "Redirect:", client.RemoteAddr(), "->", domain, port, pface)
+
+				conn, _, err = pface.Dial(domain, port, header)
 				if err != nil {
-					logPrintln(1, host, err)
+					logPrintln(1, domain, err)
 					return
 				}
 			} else {
-				logPrintln(1, "Redirect:", client.RemoteAddr(), "->", host, port, server)
-				if server.Hint&OPT_HTTP3 != 0 {
-					HttpMove(client, "h3", b[:n])
+				logPrintln(1, "Redirect:", client.RemoteAddr(), "->", domain, port, pface)
+				if pface.Hint&OPT_HTTP3 != 0 {
+					HttpMove(client, "h3", header)
 					return
-				} else if server.Hint&OPT_HTTPS != 0 {
-					HttpMove(client, "https", b[:n])
+				} else if pface.Hint&OPT_HTTPS != 0 {
+					HttpMove(client, "https", header)
 					return
-				} else if server.Hint&OPT_MOVE != 0 {
-					HttpMove(client, server.Address, b[:n])
+				} else if pface.Hint&OPT_MOVE != 0 {
+					HttpMove(client, pface.Address, header)
 					return
-				} else if server.Hint&OPT_STRIP != 0 {
-					if server.Hint&OPT_FRONTING != 0 {
-						conn, err = server.DialStrip(host, "")
-						host = ""
+				} else if pface.Hint&OPT_STRIP != 0 {
+					if pface.Hint&OPT_FRONTING != 0 {
+						conn, err = pface.DialStrip(domain, "")
+						domain = ""
 					} else {
-						conn, err = server.DialStrip(host, host)
+						conn, err = pface.DialStrip(domain, domain)
 					}
 
 					if err != nil {
 						logPrintln(1, err)
 						return
 					}
-					_, err = conn.Write(b[:n])
+					_, err = conn.Write(header)
 					if err != nil {
 						logPrintln(1, err)
 						return
 					}
 				} else {
 					var info *ConnectionInfo
-					conn, info, err = server.Dial(host, port, b[:n])
+					conn, info, err = pface.Dial(domain, port, header)
 					if err != nil {
-						logPrintln(1, host, err)
+						logPrintln(1, domain, err)
 						return
 					}
 
 					if info != nil {
-						server.Keep(client, conn, info)
+						pface.Keep(client, conn, info)
 						return
 					}
 				}
 			}
-		} else if ips != nil {
-			logPrintln(1, "RedirectProxy:", client.RemoteAddr(), "->", addr)
+		} else {
+			logPrintln(1, "Redirect:", client.RemoteAddr(), "->", addr)
 			conn, err = net.DialTCP("tcp", nil, addr)
 			if err != nil {
-				logPrintln(1, host, err)
+				logPrintln(1, domain, err)
 				return
 			}
 		}

@@ -593,8 +593,6 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 
 		offset += int(DataLength)
 	}
-
-	return
 }
 
 func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {

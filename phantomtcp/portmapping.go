@@ -119,12 +119,12 @@ func DialUDP(address string) (net.Conn, error) {
 	}
 }
 
-func UDPMapping(Address, Host string) error {
-	if len(Host) == 0 {
+func UDPMapping(Address string, Target string) error {
+	if len(Target) == 0 {
 		return nil
 	}
 
-	logPrintln(1, "UDPMapping:", Address, Host)
+	logPrintln(1, "UDPMapping:", Address, Target)
 
 	localPort, err := strconv.Atoi(Address)
 	if err == nil {
@@ -132,15 +132,17 @@ func UDPMapping(Address, Host string) error {
 		if err != nil {
 			return err
 		}
-		remoteConn, err := DialUDP(Host)
+
+		var SrcAddr *net.UDPAddr = nil
+		conn, err := DialUDP(Target)
 		if err != nil {
 			return err
 		}
-		var clientAddr *net.UDPAddr = nil
-		go func(raddr **net.UDPAddr, remoteConn net.Conn) {
+
+		go func(raddr **net.UDPAddr, conn net.Conn) {
 			data := make([]byte, 1500)
 			for {
-				n, err := remoteConn.Read(data)
+				n, err := conn.Read(data)
 				if err != nil {
 					log.Println(err)
 					continue
@@ -149,18 +151,18 @@ func UDPMapping(Address, Host string) error {
 					localConn.WriteToUDP(data[:n], *raddr)
 				}
 			}
-		}(&clientAddr, remoteConn)
+		}(&SrcAddr, conn)
 
 		data := make([]byte, 1500)
 		for {
 			var n int
-			n, clientAddr, err = localConn.ReadFromUDP(data)
+			n, SrcAddr, err = localConn.ReadFromUDP(data)
 			if err != nil {
-				clientAddr = nil
+				SrcAddr = nil
 				log.Println(err)
 				continue
 			}
-			remoteConn.Write(data[:n])
+			conn.Write(data[:n])
 		}
 	} else {
 		localConn, err := ListenUDP(Address)
@@ -188,9 +190,9 @@ func UDPMapping(Address, Host string) error {
 				udpConn.Write(data[:n])
 				UDPLock.Unlock()
 			} else {
-				logPrintln(1, "[UDP]", clientAddr.String(), Host)
+				logPrintln(1, "[UDP]", clientAddr.String(), Target)
 				UDPLock.Unlock()
-				remoteConn, err := DialUDP(Host)
+				remoteConn, err := DialUDP(Target)
 				if err != nil {
 					log.Println(err)
 					continue

@@ -217,6 +217,10 @@ func StartService() {
 		case "tproxy":
 			fmt.Println("TProxy:", service.Address)
 			go ptcp.TProxyUDP(service.Address)
+		case "tcp":
+			go ptcp.TCPMapping(service.Address, service.Peers[0].Endpoint)
+		case "udp":
+			go ptcp.UDPMapping(service.Address, service.Peers[0].Endpoint)
 		case "pac":
 			if default_socks != "" {
 				go PACServer(service.Address, default_socks)

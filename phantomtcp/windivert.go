@@ -17,41 +17,43 @@ import (
 )
 
 var HintMap = map[string]uint32{
-	"none":   OPT_NONE,
-	"ttl":    OPT_TTL,
-	"mss":    OPT_MSS,
-	"w-md5":  OPT_WMD5,
-	"n-ack":  OPT_NACK,
-	"w-ack":  OPT_WACK,
-	"w-csum": OPT_WCSUM,
-	"w-seq":  OPT_WSEQ,
-	"w-time": OPT_WTIME,
+	"none": HINT_NONE,
 
-	"tfo":    OPT_TFO,
-	"udp":    OPT_UDP,
-	"no-tcp": OPT_NOTCP,
-	"delay":  OPT_DELAY,
+	"http":  HINT_HTTP,
+	"https": HINT_HTTPS,
+	"h3":    HINT_HTTP3,
 
-	"mode2":      OPT_MODE2,
-	"df":         OPT_DF,
-	"sat":        OPT_SAT,
-	"rand":       OPT_RAND,
-	"s-seg":      OPT_SSEG,
-	"1-seg":      OPT_1SEG,
-	"half-tfo":   OPT_HTFO,
-	"keep-alive": OPT_KEEPALIVE,
-	"synx2":      OPT_SYNX2,
-	"zero":       OPT_ZERO,
+	"ipv4": HINT_IPV4,
+	"ipv6": HINT_IPV6,
 
-	"http":     OPT_HTTP,
-	"https":    OPT_HTTPS,
-	"h3":       OPT_HTTP3,
-	"move":     OPT_MOVE,
-	"strip":    OPT_STRIP,
-	"fronting": OPT_FRONTING,
+	"move":     HINT_MOVE,
+	"strip":    HINT_STRIP,
+	"fronting": HINT_FRONTING,
 
-	"ipv4": OPT_IPV4,
-	"ipv6": OPT_IPV6,
+	"ttl":    HINT_TTL,
+	"mss":    HINT_MSS,
+	"w-md5":  HINT_WMD5,
+	"n-ack":  HINT_NACK,
+	"w-ack":  HINT_WACK,
+	"w-csum": HINT_WCSUM,
+	"w-seq":  HINT_WSEQ,
+	"w-time": HINT_WTIME,
+
+	"tfo":    HINT_TFO,
+	"udp":    HINT_UDP,
+	"no-tcp": HINT_NOTCP,
+	"delay":  HINT_DELAY,
+
+	"mode2":      HINT_MODE2,
+	"df":         HINT_DF,
+	"sat":        HINT_SAT,
+	"rand":       HINT_RAND,
+	"s-seg":      HINT_SSEG,
+	"1-seg":      HINT_1SEG,
+	"half-tfo":   HINT_HTFO,
+	"keep-alive": HINT_KEEPALIVE,
+	"synx2":      HINT_SYNX2,
+	"zero":       HINT_ZERO,
 }
 
 var ConnWait4 [65536]uint32
@@ -136,9 +138,9 @@ func connectionMonitor(layer uint8) {
 				ch := ConnInfo4[srcPort]
 				connInfo := &ConnectionInfo{nil, ip, *tcp}
 
-				if hint&(OPT_TFO|OPT_HTFO|OPT_SYNX2) != 0 {
+				if hint&(HINT_TFO|HINT_HTFO|HINT_SYNX2) != 0 {
 					if synack {
-						if hint&(OPT_TFO|OPT_HTFO) != 0 {
+						if hint&(HINT_TFO|HINT_HTFO) != 0 {
 							for _, op := range tcp.Options {
 								if op.OptionType == 34 {
 									TFOCookies.Store(ip.DstIP.String(), op.OptionData)
@@ -146,10 +148,10 @@ func connectionMonitor(layer uint8) {
 							}
 						}
 						ConnWait4[srcPort] = 0
-					} else if hint&(OPT_TFO|OPT_HTFO) != 0 {
+					} else if hint&(HINT_TFO|HINT_HTFO) != 0 {
 						if ip.TTL < 128 {
 							count := 1
-							if hint&OPT_SYNX2 != 0 {
+							if hint&HINT_SYNX2 != 0 {
 								count = 2
 							}
 
@@ -159,18 +161,18 @@ func connectionMonitor(layer uint8) {
 								payload := TFOPayload[tfo_id]
 								if payload != nil {
 									ip.TOS = 0
-									ModifyAndSendPacket(connInfo, payload, OPT_TFO, 0, count)
+									ModifyAndSendPacket(connInfo, payload, HINT_TFO, 0, count)
 									ConnWait4[srcPort] = hint
 								} else {
 									connInfo = nil
 								}
 							} else {
 								ip.TOS = 0
-								ModifyAndSendPacket(connInfo, nil, OPT_TFO, 0, count)
+								ModifyAndSendPacket(connInfo, nil, HINT_TFO, 0, count)
 								connInfo = nil
 							}
 						}
-					} else if hint&OPT_SYNX2 != 0 {
+					} else if hint&HINT_SYNX2 != 0 {
 						winDivert.Send(divertpacket)
 						SendPacket(packet)
 					}
@@ -227,9 +229,9 @@ func connectionMonitor(layer uint8) {
 				ch := ConnInfo6[srcPort]
 				connInfo := &ConnectionInfo{nil, ip, *tcp}
 
-				if hint&(OPT_TFO|OPT_HTFO|OPT_SYNX2) != 0 {
+				if hint&(HINT_TFO|HINT_HTFO|HINT_SYNX2) != 0 {
 					if synack {
-						if hint&(OPT_TFO|OPT_HTFO) != 0 {
+						if hint&(HINT_TFO|HINT_HTFO) != 0 {
 							for _, op := range tcp.Options {
 								if op.OptionType == 34 {
 									TFOCookies.Store(ip.DstIP.String(), op.OptionData)
@@ -237,10 +239,10 @@ func connectionMonitor(layer uint8) {
 							}
 						}
 						ConnWait6[srcPort] = 0
-					} else if hint&(OPT_TFO|OPT_HTFO) != 0 {
+					} else if hint&(HINT_TFO|HINT_HTFO) != 0 {
 						if ip.HopLimit < 128 {
 							count := 1
-							if hint&OPT_SYNX2 != 0 {
+							if hint&HINT_SYNX2 != 0 {
 								count = 2
 							}
 
@@ -250,18 +252,18 @@ func connectionMonitor(layer uint8) {
 								payload := TFOPayload[tfo_id]
 								if payload != nil {
 									ip.TrafficClass = 0
-									ModifyAndSendPacket(connInfo, payload, OPT_TFO, 0, count)
+									ModifyAndSendPacket(connInfo, payload, HINT_TFO, 0, count)
 									ConnWait4[srcPort] = hint
 								} else {
 									connInfo = nil
 								}
 							} else {
 								ip.TrafficClass = 0
-								ModifyAndSendPacket(connInfo, nil, OPT_TFO, 0, count)
+								ModifyAndSendPacket(connInfo, nil, HINT_TFO, 0, count)
 								connInfo = nil
 							}
 						}
-					} else if hint&OPT_SYNX2 != 0 {
+					} else if hint&HINT_SYNX2 != 0 {
 						winDivert.Send(divertpacket)
 						SendPacket(packet)
 					}
@@ -313,7 +315,7 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 	ipLayer := connInfo.IP
 
 	var tcpLayer *layers.TCP
-	if hint&OPT_TFO != 0 {
+	if hint&HINT_TFO != 0 {
 		tcpLayer = &connInfo.TCP
 
 		tcpLayer.Seq -= uint32(len(payload))
@@ -350,21 +352,21 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 			Window:     connInfo.TCP.Window,
 		}
 
-		if hint&OPT_WMD5 != 0 {
+		if hint&HINT_WMD5 != 0 {
 			tcpLayer.Options = []layers.TCPOption{
 				layers.TCPOption{19, 16, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
 			}
-		} else if hint&OPT_WTIME != 0 {
+		} else if hint&HINT_WTIME != 0 {
 			tcpLayer.Options = []layers.TCPOption{
 				layers.TCPOption{8, 8, []byte{0, 0, 0, 0, 0, 0, 0, 0}},
 			}
 		}
 	}
 
-	if hint&OPT_NACK != 0 {
+	if hint&HINT_NACK != 0 {
 		tcpLayer.ACK = false
 		tcpLayer.Ack = 0
-	} else if hint&OPT_WACK != 0 {
+	} else if hint&HINT_WACK != 0 {
 		tcpLayer.Ack += uint32(tcpLayer.Window)
 	}
 
@@ -373,11 +375,11 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 	var options gopacket.SerializeOptions
 	options.FixLengths = true
 
-	if hint&OPT_WCSUM == 0 {
+	if hint&HINT_WCSUM == 0 {
 		options.ComputeChecksums = true
 	}
 
-	if hint&OPT_WSEQ != 0 {
+	if hint&HINT_WSEQ != 0 {
 		tcpLayer.Seq--
 		fakepayload := make([]byte, len(payload)+1)
 		fakepayload[0] = 0xFF
@@ -389,14 +391,14 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 
 	switch ip := ipLayer.(type) {
 	case *layers.IPv4:
-		if hint&OPT_TTL != 0 {
+		if hint&HINT_TTL != 0 {
 			ip.TTL = ttl
 		}
 		gopacket.SerializeLayers(buffer, options,
 			ip, tcpLayer, gopacket.Payload(payload),
 		)
 	case *layers.IPv6:
-		if hint&OPT_TTL != 0 {
+		if hint&HINT_TTL != 0 {
 			ip.HopLimit = ttl
 		}
 		gopacket.SerializeLayers(buffer, options,

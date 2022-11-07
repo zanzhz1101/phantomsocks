@@ -23,11 +23,11 @@ type RecordAddresses struct {
 }
 
 type DNSRecords struct {
-	Index int
-	Hint  uint
-	A     *RecordAddresses
-	AAAA  *RecordAddresses
-	Ech   []byte
+	Index    uint32
+	ALPN     uint32
+	IPv4Hint *RecordAddresses
+	IPv6Hint *RecordAddresses
+	Ech      []byte
 }
 
 var DNSMinTTL uint32 = 0
@@ -322,7 +322,7 @@ func TFOlookup(request []byte, address string) ([]byte, error) {
 	conn, _, err = DialConnInfo(
 		nil, addr,
 		&PhantomInterface{
-			Hint: OPT_TFO,
+			Hint: HINT_TFO,
 			TTL:  1,
 		},
 		data[:len(request)+2],
@@ -513,10 +513,10 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 			if ip == nil {
 				continue
 			}
-			if records.A == nil {
-				records.A = &RecordAddresses{int64(TTL) + time.Now().Unix(), []net.IP{ip}}
+			if records.IPv4Hint == nil {
+				records.IPv4Hint = &RecordAddresses{int64(TTL) + time.Now().Unix(), []net.IP{ip}}
 			} else {
-				records.A.Addresses = append(records.A.Addresses, ip)
+				records.IPv4Hint.Addresses = append(records.IPv4Hint.Addresses, ip)
 			}
 		case 28:
 			var data [16]byte
@@ -529,10 +529,10 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 			if ip == nil {
 				continue
 			}
-			if records.AAAA == nil {
-				records.AAAA = &RecordAddresses{int64(TTL) + time.Now().Unix(), []net.IP{ip}}
+			if records.IPv6Hint == nil {
+				records.IPv6Hint = &RecordAddresses{int64(TTL) + time.Now().Unix(), []net.IP{ip}}
 			} else {
-				records.AAAA.Addresses = append(records.AAAA.Addresses, ip)
+				records.IPv6Hint.Addresses = append(records.IPv6Hint.Addresses, ip)
 			}
 		case 65:
 			offset += 3
@@ -557,11 +557,11 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 						offset += ALPNLen
 						switch ALPN {
 						case "http/1.1":
-							records.Hint |= OPT_HTTP
+							records.ALPN |= HINT_HTTP
 						case "h2":
-							records.Hint |= OPT_HTTPS
+							records.ALPN |= HINT_HTTPS
 						case "h3":
-							records.Hint |= OPT_HTTP3
+							records.ALPN |= HINT_HTTP3
 						}
 					}
 				case 4:
@@ -571,7 +571,7 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 						IPv4Hint = append(IPv4Hint, net.IPv4(data[0], data[1], data[2], data[3]))
 						offset += 4
 					}
-					records.A = &RecordAddresses{int64(TTL) + time.Now().Unix(), IPv4Hint}
+					records.IPv4Hint = &RecordAddresses{int64(TTL) + time.Now().Unix(), IPv4Hint}
 				case 5:
 					records.Ech = make([]byte, SvcParamLen)
 					copy(records.Ech, response[offset:SvcParamEnd])
@@ -582,7 +582,7 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 						IPv6Hint = append(IPv6Hint, ip)
 						offset += 16
 					}
-					records.AAAA = &RecordAddresses{int64(TTL) + time.Now().Unix(), IPv6Hint}
+					records.IPv6Hint = &RecordAddresses{int64(TTL) + time.Now().Unix(), IPv6Hint}
 				}
 				offset = SvcParamEnd
 			}
@@ -642,31 +642,31 @@ func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 
 	switch qtype {
 	case 1:
-		if records.A == nil {
+		if records.IPv4Hint == nil {
 			return 0, nil
 		}
-		return packA(records.A.Addresses)
+		return packA(records.IPv4Hint.Addresses)
 	case 28:
-		if records.AAAA == nil {
+		if records.IPv6Hint == nil {
 			return 0, nil
 		}
-		return packA(records.AAAA.Addresses)
+		return packA(records.IPv6Hint.Addresses)
 	case 65:
 		var totalLen uint16 = 15
 
-		if records.Hint&(OPT_HTTPS|OPT_HTTP3) != 0 {
+		if records.ALPN&(HINT_HTTPS|HINT_HTTP3) != 0 {
 			totalLen += 4
-			if records.Hint&OPT_HTTP3 != 0 {
+			if records.ALPN&HINT_HTTP3 != 0 {
 				totalLen += 3
 			}
-			if records.Hint&OPT_HTTPS != 0 {
+			if records.ALPN&HINT_HTTPS != 0 {
 				totalLen += 3
 			}
 		}
 
 		v4Count := 0
-		if records.A != nil {
-			v4Count = len(records.A.Addresses)
+		if records.IPv4Hint != nil {
+			v4Count = len(records.IPv4Hint.Addresses)
 			if v4Count > 0 {
 				totalLen += uint16(4 + v4Count*4)
 			}
@@ -678,8 +678,8 @@ func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 		}
 
 		v6Count := 0
-		if records.AAAA != nil {
-			v6Count = len(records.AAAA.Addresses)
+		if records.IPv6Hint != nil {
+			v6Count = len(records.IPv6Hint.Addresses)
 			if v6Count > 0 {
 				totalLen += uint16(4 + v6Count*16)
 			}
@@ -697,15 +697,15 @@ func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 		answers[14] = 0
 		length := 15
 
-		if records.Hint&(OPT_HTTPS|OPT_HTTP3) != 0 {
+		if records.ALPN&(HINT_HTTPS|HINT_HTTP3) != 0 {
 			copy(answers[length:], []byte{0, 1, 0, 0})
 			svcLenOffset := length + 2
 			length += 4
-			if records.Hint&OPT_HTTP3 != 0 {
+			if records.ALPN&HINT_HTTP3 != 0 {
 				copy(answers[length:], []byte{2, 0x68, 0x33})
 				length += 3
 			}
-			if records.Hint&OPT_HTTPS != 0 {
+			if records.ALPN&HINT_HTTPS != 0 {
 				copy(answers[length:], []byte{2, 0x68, 0x32})
 				length += 3
 			}
@@ -717,7 +717,7 @@ func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 			length += 2
 			binary.BigEndian.PutUint16(answers[length:], uint16(v4Count*4))
 			length += 2
-			for _, ip := range records.A.Addresses {
+			for _, ip := range records.IPv4Hint.Addresses {
 				ip4 := ip.To4()
 				if ip4 == nil {
 					logPrintln(1, ip, "not IPv4")
@@ -742,7 +742,7 @@ func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 			length += 2
 			binary.BigEndian.PutUint16(answers[length:], uint16(v6Count*16))
 			length += 2
-			for _, ip := range records.AAAA.Addresses {
+			for _, ip := range records.IPv6Hint.Addresses {
 				copy(answers[length:], ip.To16())
 				length += 16
 			}
@@ -789,17 +789,17 @@ func (records DNSRecords) BuildResponse(request []byte, qtype int, ttl uint32) [
 			copy(response[length:], []byte{0xC0, 0x0C, 0x00, 65, 0, 1, 0, 0, 0, 16, 0, 0, 0, 1, 0})
 			dataLenOffset := length + 10
 			length += 15
-			if records.Hint&(OPT_HTTPS|OPT_HTTP3) != 0 {
+			if records.ALPN&(HINT_HTTPS|HINT_HTTP3) != 0 {
 				copy(response[length:], []byte{0, 1, 0, 0})
 				svcLenOffset := length + 2
 				length += 4
-				if records.Hint&OPT_HTTP3 != 0 {
+				if records.ALPN&HINT_HTTP3 != 0 {
 					copy(response[length:], []byte{2, 0x68, 0x33})
 					length += 3
 					copy(response[length:], []byte{5, 0x68, 0x33, 0x2d, 0x32, 0x39})
 					length += 6
 				}
-				if records.Hint&OPT_HTTPS != 0 {
+				if records.ALPN&HINT_HTTPS != 0 {
 					copy(response[length:], []byte{2, 0x68, 0x32})
 					length += 3
 				}
@@ -968,9 +968,9 @@ func StoreDNSCache(qname string, record *DNSRecords) {
 	DNSCache.Store(qname, record)
 }
 
-func NSLookup(name string, hint uint32, server string) (int, []net.IP) {
+func NSLookup(name string, hint uint32, server string) (uint32, []net.IP) {
 	var qtype uint16 = 1
-	if hint&OPT_IPV6 != 0 {
+	if hint&HINT_IPV6 != 0 {
 		qtype = 28
 	}
 
@@ -997,14 +997,14 @@ func NSLookup(name string, hint uint32, server string) (int, []net.IP) {
 	}
 	switch qtype {
 	case 1:
-		if records.A != nil {
-			logPrintln(3, "cached:", name, qtype, records.A.Addresses)
-			return records.Index, records.A.Addresses
+		if records.IPv4Hint != nil {
+			logPrintln(3, "cached:", name, qtype, records.IPv4Hint.Addresses)
+			return records.Index, records.IPv4Hint.Addresses
 		}
 	case 28:
-		if records.AAAA != nil {
-			logPrintln(3, "cached:", name, qtype, records.AAAA.Addresses)
-			return records.Index, records.AAAA.Addresses
+		if records.IPv6Hint != nil {
+			logPrintln(3, "cached:", name, qtype, records.IPv6Hint.Addresses)
+			return records.Index, records.IPv6Hint.Addresses
 		}
 	default:
 		return 0, nil
@@ -1043,8 +1043,8 @@ func NSLookup(name string, hint uint32, server string) (int, []net.IP) {
 			response, err = TFOlookup(request, u.Host)
 		default:
 			NoseLock.Lock()
-			records.Index = len(Nose)
-			records.Hint = uint(hint)
+			records.Index = uint32(len(Nose))
+			records.ALPN = hint
 			Nose = append(Nose, name)
 			NoseLock.Unlock()
 			return records.Index, nil
@@ -1057,8 +1057,8 @@ func NSLookup(name string, hint uint32, server string) (int, []net.IP) {
 
 	if records.Index == 0 && hint != 0 {
 		NoseLock.Lock()
-		records.Index = len(Nose)
-		records.Hint = uint(hint)
+		records.Index = uint32(len(Nose))
+		records.ALPN = hint & HINT_DNS
 		Nose = append(Nose, name)
 		NoseLock.Unlock()
 	}
@@ -1067,34 +1067,34 @@ func NSLookup(name string, hint uint32, server string) (int, []net.IP) {
 
 	switch qtype {
 	case 1:
-		if records.A == nil && options.Fallback != nil {
+		if records.IPv4Hint == nil && options.Fallback != nil {
 			if options.Fallback.To4() != nil {
 				logPrintln(4, "request:", name, "fallback", options.Fallback)
-				records.A = &RecordAddresses{0, []net.IP{options.Fallback}}
+				records.IPv4Hint = &RecordAddresses{0, []net.IP{options.Fallback}}
 			}
 		}
-		if records.A == nil {
-			records.A = &RecordAddresses{0, []net.IP{}}
+		if records.IPv4Hint == nil {
+			records.IPv4Hint = &RecordAddresses{0, []net.IP{}}
 		}
-		logPrintln(3, "nslookup", name, qtype, records.A.Addresses)
-		return records.Index, records.A.Addresses
+		logPrintln(3, "nslookup", name, qtype, records.IPv4Hint.Addresses)
+		return records.Index, records.IPv4Hint.Addresses
 	case 28:
-		if records.AAAA == nil && options.Fallback != nil {
+		if records.IPv6Hint == nil && options.Fallback != nil {
 			if options.Fallback.To4() == nil {
-				records.AAAA = &RecordAddresses{0, []net.IP{options.Fallback}}
+				records.IPv6Hint = &RecordAddresses{0, []net.IP{options.Fallback}}
 			}
 		}
-		if records.AAAA == nil {
-			records.AAAA = &RecordAddresses{0, []net.IP{}}
+		if records.IPv6Hint == nil {
+			records.IPv6Hint = &RecordAddresses{0, []net.IP{}}
 		}
-		logPrintln(3, "nslookup", name, qtype, records.AAAA.Addresses)
-		return records.Index, records.AAAA.Addresses
+		logPrintln(3, "nslookup", name, qtype, records.IPv6Hint.Addresses)
+		return records.Index, records.IPv6Hint.Addresses
 	}
 
 	return records.Index, nil
 }
 
-func NSRequest(request []byte, cache bool) (int, []byte) {
+func NSRequest(request []byte, cache bool) (uint32, []byte) {
 	name, qtype, end := GetQName(request)
 	binary.BigEndian.PutUint16(request[10:12], 0)
 	request = request[:end]
@@ -1131,15 +1131,15 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 
 	switch qtype {
 	case 1:
-		if records.A != nil {
+		if records.IPv4Hint != nil {
 			return records.Index, records.BuildResponse(request, qtype, 0)
 		}
 	case 28:
-		if records.AAAA != nil {
+		if records.IPv6Hint != nil {
 			return records.Index, records.BuildResponse(request, qtype, 0)
 		}
 	case 65:
-		if records.Hint&(OPT_HTTP3|OPT_HTTPS|OPT_UDP) != 0 {
+		if records.ALPN&(HINT_ALPN|HINT_HTTP|HINT_HTTPS|HINT_HTTP3) != 0 {
 			return records.Index, records.BuildResponse(request, qtype, 3600)
 		}
 	default:
@@ -1149,22 +1149,22 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 	var response []byte
 	var err error
 
-	server := ConfigLookup(name)
+	pface := ConfigLookup(name)
 	var options ServerOptions
 	DNS := ""
-	if server != nil {
-		records.Hint = uint(server.Hint) & OPT_DNS
-		logPrintln(2, "request:", name, server.DNS, server.Protocol)
-		DNS = server.DNS
+	if pface != nil {
+		records.ALPN = pface.Hint & HINT_DNS
+		logPrintln(2, "request:", name, pface.DNS, pface.Protocol)
+		DNS = pface.DNS
 	} else {
 		logPrintln(4, "request:", name, "no answer")
 		return 0, records.BuildResponse(request, qtype, 3600)
 	}
 
 	if DNS == "" {
-		if records.Index == 0 && server.Protocol != 0 {
+		if records.Index == 0 && pface.Protocol != 0 {
 			NoseLock.Lock()
-			records.Index = len(Nose)
+			records.Index = uint32(len(Nose))
 			Nose = append(Nose, name)
 			NoseLock.Unlock()
 		}
@@ -1188,7 +1188,7 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 		}
 
 		_qtype := uint16(qtype)
-		if records.Hint&OPT_IPV6 != 0 {
+		if records.ALPN&HINT_IPV6 != 0 {
 			_qtype = 28
 		}
 
@@ -1223,36 +1223,36 @@ func NSRequest(request []byte, cache bool) (int, []byte) {
 
 	switch qtype {
 	case 1:
-		if records.A == nil && options.Fallback != nil {
+		if records.IPv4Hint == nil && options.Fallback != nil {
 			if options.Fallback.To4() != nil {
 				logPrintln(4, "request:", name, "fallback", options.Fallback)
-				records.A = &RecordAddresses{0, []net.IP{options.Fallback}}
+				records.IPv4Hint = &RecordAddresses{0, []net.IP{options.Fallback}}
 			}
 		}
-		if records.A == nil {
+		if records.IPv4Hint == nil {
 			logPrintln(4, "request:", name, "no answer")
-			records.A = &RecordAddresses{0, []net.IP{}}
+			records.IPv4Hint = &RecordAddresses{0, []net.IP{}}
 			return 0, records.BuildResponse(request, qtype, 0)
 		}
-		logPrintln(3, "response:", name, qtype, records.A.Addresses)
+		logPrintln(3, "response:", name, qtype, records.IPv4Hint.Addresses)
 	case 28:
-		if records.AAAA == nil && options.Fallback != nil {
+		if records.IPv6Hint == nil && options.Fallback != nil {
 			if options.Fallback.To4() == nil {
 				logPrintln(4, "request:", name, "fallback", options.Fallback)
-				records.AAAA = &RecordAddresses{0, []net.IP{options.Fallback}}
+				records.IPv6Hint = &RecordAddresses{0, []net.IP{options.Fallback}}
 			}
 		}
-		if records.AAAA == nil {
+		if records.IPv6Hint == nil {
 			logPrintln(4, "request:", name, "no answer")
-			records.AAAA = &RecordAddresses{0, []net.IP{}}
+			records.IPv6Hint = &RecordAddresses{0, []net.IP{}}
 			return 0, records.BuildResponse(request, qtype, 0)
 		}
-		logPrintln(3, "response:", name, qtype, records.AAAA.Addresses)
+		logPrintln(3, "response:", name, qtype, records.IPv6Hint.Addresses)
 	}
 
-	if records.Index == 0 && ((server.Hint&OPT_MODIFY) != 0 || server.Protocol != 0) {
+	if records.Index == 0 && ((pface.Hint&HINT_MODIFY) != 0 || pface.Protocol != 0) {
 		NoseLock.Lock()
-		records.Index = len(Nose)
+		records.Index = uint32(len(Nose))
 		Nose = append(Nose, name)
 		NoseLock.Unlock()
 	}

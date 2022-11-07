@@ -20,7 +20,7 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 	ipLayer := connInfo.IP
 
 	var tcpLayer *layers.TCP
-	if hint&OPT_TFO != 0 {
+	if hint&HINT_TFO != 0 {
 		tcpLayer = &connInfo.TCP
 
 		tcpLayer.Seq -= uint32(len(payload))
@@ -57,21 +57,21 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 			Window:     connInfo.TCP.Window,
 		}
 
-		if hint&OPT_WMD5 != 0 {
+		if hint&HINT_WMD5 != 0 {
 			tcpLayer.Options = []layers.TCPOption{
 				layers.TCPOption{19, 16, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
 			}
-		} else if hint&OPT_WTIME != 0 {
+		} else if hint&HINT_WTIME != 0 {
 			tcpLayer.Options = []layers.TCPOption{
 				layers.TCPOption{8, 8, []byte{0, 0, 0, 0, 0, 0, 0, 0}},
 			}
 		}
 	}
 
-	if hint&OPT_NACK != 0 {
+	if hint&HINT_NACK != 0 {
 		tcpLayer.ACK = false
 		tcpLayer.Ack = 0
-	} else if hint&OPT_WACK != 0 {
+	} else if hint&HINT_WACK != 0 {
 		tcpLayer.Ack += uint32(tcpLayer.Window)
 	}
 
@@ -80,11 +80,11 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 	var options gopacket.SerializeOptions
 	options.FixLengths = true
 
-	if hint&OPT_WCSUM == 0 {
+	if hint&HINT_WCSUM == 0 {
 		options.ComputeChecksums = true
 	}
 
-	if hint&OPT_WSEQ != 0 {
+	if hint&HINT_WSEQ != 0 {
 		tcpLayer.Seq--
 		fakepayload := make([]byte, len(payload)+1)
 		fakepayload[0] = 0xFF
@@ -98,14 +98,14 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 		link := linkLayer.(*layers.Ethernet)
 		switch ip := ipLayer.(type) {
 		case *layers.IPv4:
-			if hint&OPT_TTL != 0 {
+			if hint&HINT_TTL != 0 {
 				ip.TTL = ttl
 			}
 			gopacket.SerializeLayers(buffer, options,
 				link, ip, tcpLayer, gopacket.Payload(payload),
 			)
 		case *layers.IPv6:
-			if hint&OPT_TTL != 0 {
+			if hint&HINT_TTL != 0 {
 				ip.HopLimit = ttl
 			}
 			gopacket.SerializeLayers(buffer, options,

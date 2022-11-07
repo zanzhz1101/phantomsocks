@@ -113,7 +113,7 @@ func (pface *PhantomInterface) DialUDPProxy(host string, port int) (net.Conn, ne
 			return nil, nil, err
 		}
 
-		hint = pface.Hint & OPT_MODIFY
+		hint = pface.Hint & HINT_MODIFY
 		if hint != 0 {
 			tcpConn, synpacket, err = DialConnInfo(laddr, raddr, pface, nil)
 			if err != nil {

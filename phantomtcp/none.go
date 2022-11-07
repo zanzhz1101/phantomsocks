@@ -4,22 +4,22 @@
 package phantomtcp
 
 var HintMap = map[string]uint32{
-	"none": OPT_NONE,
-	"mss":  OPT_MSS,
+	"none":  HINT_NONE,
+	"http":  HINT_HTTP,
+	"https": HINT_HTTPS,
+	"h3":    HINT_HTTP3,
 
-	"udp":    OPT_UDP,
-	"no-tcp": OPT_NOTCP,
-	"delay":  OPT_DELAY,
+	"ipv4": HINT_IPV4,
+	"ipv6": HINT_IPV6,
 
-	"http":     OPT_HTTP,
-	"https":    OPT_HTTPS,
-	"h3":       OPT_HTTP3,
-	"move":     OPT_MOVE,
-	"strip":    OPT_STRIP,
-	"fronting": OPT_FRONTING,
+	"move":     HINT_MOVE,
+	"strip":    HINT_STRIP,
+	"fronting": HINT_FRONTING,
 
-	"ipv4": OPT_IPV4,
-	"ipv6": OPT_IPV6,
+	"mss":    HINT_MSS,
+	"udp":    HINT_UDP,
+	"no-tcp": HINT_NOTCP,
+	"delay":  HINT_DELAY,
 }
 
 func DevicePrint() {

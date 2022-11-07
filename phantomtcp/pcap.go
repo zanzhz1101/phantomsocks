@@ -15,40 +15,42 @@ import (
 )
 
 var HintMap = map[string]uint32{
-	"none":   OPT_NONE,
-	"ttl":    OPT_TTL,
-	"mss":    OPT_MSS,
-	"w-md5":  OPT_WMD5,
-	"n-ack":  OPT_NACK,
-	"w-csum": OPT_WCSUM,
-	"w-seq":  OPT_WSEQ,
-	"w-time": OPT_WTIME,
+	"none": HINT_NONE,
 
-	"tfo":    OPT_TFO,
-	"udp":    OPT_UDP,
-	"no-tcp": OPT_NOTCP,
-	"delay":  OPT_DELAY,
+	"http":  HINT_HTTP,
+	"https": HINT_HTTPS,
+	"h3":    HINT_HTTP3,
 
-	"mode2":      OPT_MODE2,
-	"df":         OPT_DF,
-	"sat":        OPT_SAT,
-	"rand":       OPT_RAND,
-	"s-seg":      OPT_SSEG,
-	"1-seg":      OPT_1SEG,
-	"half-tfo":   OPT_HTFO,
-	"keep-alive": OPT_KEEPALIVE,
-	"synx2":      OPT_SYNX2,
-	"zero":       OPT_ZERO,
+	"ipv4": HINT_IPV4,
+	"ipv6": HINT_IPV6,
 
-	"http":     OPT_HTTP,
-	"https":    OPT_HTTPS,
-	"h3":       OPT_HTTP3,
-	"move":     OPT_MOVE,
-	"strip":    OPT_STRIP,
-	"fronting": OPT_FRONTING,
+	"move":     HINT_MOVE,
+	"strip":    HINT_STRIP,
+	"fronting": HINT_FRONTING,
 
-	"ipv4": OPT_IPV4,
-	"ipv6": OPT_IPV6,
+	"ttl":    HINT_TTL,
+	"mss":    HINT_MSS,
+	"w-md5":  HINT_WMD5,
+	"n-ack":  HINT_NACK,
+	"w-csum": HINT_WCSUM,
+	"w-seq":  HINT_WSEQ,
+	"w-time": HINT_WTIME,
+
+	"tfo":    HINT_TFO,
+	"udp":    HINT_UDP,
+	"no-tcp": HINT_NOTCP,
+	"delay":  HINT_DELAY,
+
+	"mode2":      HINT_MODE2,
+	"df":         HINT_DF,
+	"sat":        HINT_SAT,
+	"rand":       HINT_RAND,
+	"s-seg":      HINT_SSEG,
+	"1-seg":      HINT_1SEG,
+	"half-tfo":   HINT_HTFO,
+	"keep-alive": HINT_KEEPALIVE,
+	"synx2":      HINT_SYNX2,
+	"zero":       HINT_ZERO,
 }
 
 var ConnWait4 [65536]uint32
@@ -159,9 +161,9 @@ func connectionMonitor(device string) {
 					connInfo = &ConnectionInfo{nil, ip, *tcp}
 				}
 
-				if hint&(OPT_TFO|OPT_HTFO|OPT_SYNX2) != 0 {
+				if hint&(HINT_TFO|HINT_HTFO|HINT_SYNX2) != 0 {
 					if synack {
-						if hint&(OPT_TFO|OPT_HTFO) != 0 {
+						if hint&(HINT_TFO|HINT_HTFO) != 0 {
 							for _, op := range tcp.Options {
 								if op.OptionType == 34 {
 									TFOCookies.Store(ip.DstIP.String(), op.OptionData)
@@ -169,10 +171,10 @@ func connectionMonitor(device string) {
 							}
 						}
 						ConnWait4[srcPort] = 0
-					} else if hint&(OPT_TFO|OPT_HTFO) != 0 {
+					} else if hint&(HINT_TFO|HINT_HTFO) != 0 {
 						if ip.TTL < 64 {
 							count := 1
-							if hint&OPT_SYNX2 != 0 {
+							if hint&HINT_SYNX2 != 0 {
 								count = 2
 							}
 
@@ -181,18 +183,18 @@ func connectionMonitor(device string) {
 								payload := TFOPayload[ip.TOS>>2]
 								if payload != nil {
 									ip.TOS = 0
-									ModifyAndSendPacket(connInfo, payload, OPT_TFO, 0, count)
+									ModifyAndSendPacket(connInfo, payload, HINT_TFO, 0, count)
 									ConnWait4[srcPort] = hint
 								} else {
 									connInfo = nil
 								}
 							} else {
 								ip.TOS = 0
-								ModifyAndSendPacket(connInfo, nil, OPT_TFO, 0, count)
+								ModifyAndSendPacket(connInfo, nil, HINT_TFO, 0, count)
 								connInfo = nil
 							}
 						}
-					} else if hint&OPT_SYNX2 != 0 {
+					} else if hint&HINT_SYNX2 != 0 {
 						SendPacket(packet)
 					}
 				}
@@ -254,9 +256,9 @@ func connectionMonitor(device string) {
 					connInfo = &ConnectionInfo{nil, ip, *tcp}
 				}
 
-				if hint&(OPT_TFO|OPT_HTFO|OPT_SYNX2) != 0 {
+				if hint&(HINT_TFO|HINT_HTFO|HINT_SYNX2) != 0 {
 					if synack {
-						if hint&(OPT_TFO|OPT_HTFO) != 0 {
+						if hint&(HINT_TFO|HINT_HTFO) != 0 {
 							for _, op := range tcp.Options {
 								if op.OptionType == 34 {
 									TFOCookies.Store(ip.DstIP.String(), op.OptionData)
@@ -264,10 +266,10 @@ func connectionMonitor(device string) {
 							}
 						}
 						ConnWait6[srcPort] = 0
-					} else if hint&(OPT_TFO|OPT_HTFO) != 0 {
+					} else if hint&(HINT_TFO|HINT_HTFO) != 0 {
 						if ip.HopLimit < 64 {
 							count := 1
-							if hint&OPT_SYNX2 != 0 {
+							if hint&HINT_SYNX2 != 0 {
 								count = 2
 							}
 
@@ -276,18 +278,18 @@ func connectionMonitor(device string) {
 								payload := TFOPayload[ip.TrafficClass>>2]
 								if payload != nil {
 									ip.TrafficClass = 0
-									ModifyAndSendPacket(connInfo, payload, OPT_TFO, 0, count)
+									ModifyAndSendPacket(connInfo, payload, HINT_TFO, 0, count)
 									ConnWait4[srcPort] = hint
 								} else {
 									connInfo = nil
 								}
 							} else {
 								ip.TrafficClass = 0
-								ModifyAndSendPacket(connInfo, nil, OPT_TFO, 0, count)
+								ModifyAndSendPacket(connInfo, nil, HINT_TFO, 0, count)
 								connInfo = nil
 							}
 						}
-					} else if hint&OPT_SYNX2 != 0 {
+					} else if hint&HINT_SYNX2 != 0 {
 						SendPacket(packet)
 					}
 				}

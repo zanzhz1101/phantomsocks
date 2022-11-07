@@ -157,8 +157,8 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 	length := 0
 
 	if b != nil {
-		if pface.Hint&OPT_MODIFY != 0 {
-			if pface.Hint&OPT_TFO != 0 {
+		if pface.Hint&HINT_MODIFY != 0 {
+			if pface.Hint&HINT_TFO != 0 {
 				length = len(b)
 			} else {
 				if b[0] == 0x16 {
@@ -198,7 +198,7 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 			if length > 0 {
 				cut := offset + length/2
 				tos := 1 << 2
-				if pface.Hint&OPT_TTL != 0 {
+				if pface.Hint&HINT_TTL != 0 {
 					tos = int(pface.TTL) << 2
 				}
 				err = SendWithOption(conn, b[:cut], tos, 1)
@@ -230,13 +230,13 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 
 		cut := offset + length/2
 		var tfo_payload []byte = nil
-		if (pface.Hint & (OPT_TFO | OPT_HTFO)) != 0 {
-			if (pface.Hint & OPT_TFO) != 0 {
+		if (pface.Hint & (HINT_TFO | HINT_HTFO)) != 0 {
+			if (pface.Hint & HINT_TFO) != 0 {
 				tfo_payload = b
 			} else {
 				tfo_payload = b[:cut]
 			}
-		} else if pface.Hint&OPT_RAND != 0 {
+		} else if pface.Hint&HINT_RAND != 0 {
 			_, err = rand.Read(fakepayload)
 			if err != nil {
 				logPrintln(1, err)
@@ -290,7 +290,7 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 			return nil, nil, errors.New("connection does not exist")
 		}
 
-		if (pface.Hint & OPT_DELAY) != 0 {
+		if (pface.Hint & HINT_DELAY) != 0 {
 			time.Sleep(time.Second)
 		}
 
@@ -309,8 +309,8 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 		}
 
 		count := 1
-		if (pface.Hint & (OPT_TFO | OPT_HTFO)) != 0 {
-			if (pface.Hint & OPT_HTFO) != 0 {
+		if (pface.Hint & (HINT_TFO | HINT_HTFO)) != 0 {
+			if (pface.Hint & HINT_HTFO) != 0 {
 				_, err = conn.Write(b[cut:])
 				if err != nil {
 					conn.Close()
@@ -319,7 +319,7 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 			}
 			synpacket.TCP.Seq += uint32(len(b))
 		} else {
-			if pface.Hint&OPT_MODE2 != 0 {
+			if pface.Hint&HINT_MODE2 != 0 {
 				synpacket.TCP.Seq += uint32(cut)
 				fakepayload = fakepayload[cut:]
 				count = 2
@@ -332,8 +332,8 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 			}
 
 			SegOffset := 0
-			if pface.Hint&(OPT_SSEG|OPT_1SEG) != 0 {
-				if pface.Hint&OPT_1SEG != 0 {
+			if pface.Hint&(HINT_SSEG|HINT_1SEG) != 0 {
+				if pface.Hint&HINT_1SEG != 0 {
 					SegOffset = 1
 				} else {
 					SegOffset = 4
@@ -364,7 +364,7 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 			}
 
 			synpacket.TCP.Seq += uint32(len(b))
-			if pface.Hint&OPT_SAT != 0 {
+			if pface.Hint&HINT_SAT != 0 {
 				_, err = rand.Read(fakepayload)
 				if err != nil {
 					conn.Close()
@@ -453,7 +453,7 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 	var err error
 	proxy_err := errors.New("invalid proxy")
 
-	hint := server.Hint & OPT_MODIFY
+	hint := server.Hint & HINT_MODIFY
 	var proxy_seq uint32 = 0
 	switch server.Protocol {
 	case REDIRECT:
@@ -464,12 +464,12 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 			fakepayload := make([]byte, len(request))
 			var n int = 0
 			if synpacket != nil {
-				if hint&OPT_SSEG != 0 {
+				if hint&HINT_SSEG != 0 {
 					n, err = conn.Write(request[:4])
 					if err != nil {
 						return err
 					}
-				} else if hint&OPT_MODE2 != 0 {
+				} else if hint&HINT_MODE2 != 0 {
 					n, err = conn.Write(request[:10])
 					if err != nil {
 						return err
@@ -482,9 +482,9 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 					return err
 				}
 
-				if hint&OPT_SSEG != 0 {
+				if hint&HINT_SSEG != 0 {
 					n, err = conn.Write(request[4:])
-				} else if hint&OPT_MODE2 != 0 {
+				} else if hint&HINT_MODE2 != 0 {
 					n, err = conn.Write(request[10:])
 				} else {
 					n, err = conn.Write(request)

@@ -80,47 +80,49 @@ var Forward bool = false
 var PassiveMode = false
 
 const (
-	OPT_NONE = 0x0
+	HINT_NONE = 0x0
 
-	OPT_TTL   = 0x1 << 0
-	OPT_MSS   = 0x1 << 1
-	OPT_WMD5  = 0x1 << 2
-	OPT_NACK  = 0x1 << 3
-	OPT_WACK  = 0x1 << 4
-	OPT_WCSUM = 0x1 << 5
-	OPT_WSEQ  = 0x1 << 6
-	OPT_WTIME = 0x1 << 7
+	HINT_ALPN  = 0x1 << 1
+	HINT_HTTP  = 0x1 << 2
+	HINT_HTTPS = 0x1 << 3
+	HINT_HTTP3 = 0x1 << 4
 
-	OPT_TFO   = 0x1 << 8
-	OPT_UDP   = 0x1 << 9
-	OPT_NOTCP = 0x1 << 10
-	OPT_DELAY = 0x1 << 11
+	HINT_IPV4 = 0x1 << 5
+	HINT_IPV6 = 0x1 << 6
 
-	OPT_MODE2     = 0x1 << 12
-	OPT_DF        = 0x1 << 13
-	OPT_SAT       = 0x1 << 14
-	OPT_RAND      = 0x1 << 15
-	OPT_SSEG      = 0x1 << 16
-	OPT_1SEG      = 0x1 << 17
-	OPT_HTFO      = 0x1 << 18
-	OPT_KEEPALIVE = 0x1 << 19
-	OPT_SYNX2     = 0x1 << 20
-	OPT_ZERO      = 0x1 << 21
+	HINT_MOVE     = 0x1 << 7
+	HINT_STRIP    = 0x1 << 8
+	HINT_FRONTING = 0x1 << 9
 
-	OPT_HTTP     = 0x1 << 23
-	OPT_HTTPS    = 0x1 << 24
-	OPT_HTTP3    = 0x1 << 25
-	OPT_MOVE     = 0x1 << 26
-	OPT_STRIP    = 0x1 << 27
-	OPT_FRONTING = 0x1 << 28
+	HINT_TTL   = 0x1 << 10
+	HINT_MSS   = 0x1 << 11
+	HINT_WMD5  = 0x1 << 12
+	HINT_NACK  = 0x1 << 13
+	HINT_WACK  = 0x1 << 14
+	HINT_WCSUM = 0x1 << 15
+	HINT_WSEQ  = 0x1 << 16
+	HINT_WTIME = 0x1 << 17
 
-	OPT_IPV4 = 0x1 << 30
-	OPT_IPV6 = 0x1 << 31
+	HINT_TFO   = 0x1 << 18
+	HINT_UDP   = 0x1 << 19
+	HINT_NOTCP = 0x1 << 20
+	HINT_DELAY = 0x1 << 21
+
+	HINT_MODE2     = 0x1 << 22
+	HINT_DF        = 0x1 << 23
+	HINT_SAT       = 0x1 << 24
+	HINT_RAND      = 0x1 << 25
+	HINT_SSEG      = 0x1 << 26
+	HINT_1SEG      = 0x1 << 27
+	HINT_HTFO      = 0x1 << 28
+	HINT_KEEPALIVE = 0x1 << 29
+	HINT_SYNX2     = 0x1 << 30
+	HINT_ZERO      = 0x1 << 31
 )
 
-const OPT_DNS = OPT_HTTP | OPT_HTTPS | OPT_HTTP3 | OPT_IPV4 | OPT_IPV6
-const OPT_FAKE = OPT_TTL | OPT_WMD5 | OPT_NACK | OPT_WACK | OPT_WCSUM | OPT_WSEQ | OPT_WTIME
-const OPT_MODIFY = OPT_FAKE | OPT_SSEG | OPT_TFO | OPT_HTFO | OPT_MODE2
+const HINT_DNS = HINT_ALPN | HINT_HTTP | HINT_HTTPS | HINT_HTTP3 | HINT_IPV4 | HINT_IPV6
+const HINT_FAKE = HINT_TTL | HINT_WMD5 | HINT_NACK | HINT_WACK | HINT_WCSUM | HINT_WSEQ | HINT_WTIME
+const HINT_MODIFY = HINT_FAKE | HINT_SSEG | HINT_TFO | HINT_HTFO | HINT_MODE2
 
 var Logger *log.Logger
 
@@ -481,9 +483,9 @@ func LoadConfig(filename string) error {
 							ip := net.ParseIP(keys[0])
 							var records *DNSRecords
 							records = new(DNSRecords)
-							if CurrentInterface.Hint != 0 || CurrentInterface.Protocol != 0 {
-								records.Index = len(Nose)
-								records.Hint = uint(CurrentInterface.Hint)
+							if CurrentInterface.Hint&HINT_MODIFY != 0 || CurrentInterface.Protocol != 0 {
+								records.Index = uint32(len(Nose))
+								records.ALPN = CurrentInterface.Hint & HINT_DNS
 								Nose = append(Nose, keys[0])
 							}
 
@@ -494,17 +496,17 @@ func LoadConfig(filename string) error {
 									result, hasCache := DNSCache.Load(addrs[i])
 									if hasCache {
 										r := result.(*DNSRecords)
-										if r.A != nil {
-											if records.A == nil {
-												records.A = new(RecordAddresses)
+										if r.IPv4Hint != nil {
+											if records.IPv4Hint == nil {
+												records.IPv4Hint = new(RecordAddresses)
 											}
-											records.A.Addresses = append(records.A.Addresses, r.A.Addresses...)
+											records.IPv4Hint.Addresses = append(records.IPv4Hint.Addresses, r.IPv4Hint.Addresses...)
 										}
-										if r.AAAA != nil {
-											if records.AAAA == nil {
-												records.AAAA = new(RecordAddresses)
+										if r.IPv6Hint != nil {
+											if records.IPv6Hint == nil {
+												records.IPv6Hint = new(RecordAddresses)
 											}
-											records.AAAA.Addresses = append(records.AAAA.Addresses, r.AAAA.Addresses...)
+											records.IPv6Hint.Addresses = append(records.IPv6Hint.Addresses, r.IPv6Hint.Addresses...)
 										}
 									} else {
 										log.Println(keys[0], addrs[i], "bad address")
@@ -512,15 +514,15 @@ func LoadConfig(filename string) error {
 								} else {
 									ip4 := ip.To4()
 									if ip4 != nil {
-										if records.A == nil {
-											records.A = new(RecordAddresses)
+										if records.IPv4Hint == nil {
+											records.IPv4Hint = new(RecordAddresses)
 										}
-										records.A.Addresses = append(records.A.Addresses, ip4)
+										records.IPv4Hint.Addresses = append(records.IPv4Hint.Addresses, ip4)
 									} else {
-										if records.AAAA == nil {
-											records.AAAA = new(RecordAddresses)
+										if records.IPv6Hint == nil {
+											records.IPv6Hint = new(RecordAddresses)
 										}
-										records.AAAA.Addresses = append(records.AAAA.Addresses, ip)
+										records.IPv6Hint.Addresses = append(records.IPv6Hint.Addresses, ip)
 									}
 								}
 							}
@@ -627,8 +629,8 @@ func LoadHosts(filename string) error {
 
 			server := ConfigLookup(name)
 			if ok && server.Hint != 0 {
-				records.Index = len(Nose)
-				records.Hint = uint(server.Hint)
+				records.Index = uint32(len(Nose))
+				records.ALPN = server.Hint & HINT_DNS
 				Nose = append(Nose, name)
 			}
 			ip := net.ParseIP(k[0])
@@ -638,9 +640,9 @@ func LoadHosts(filename string) error {
 			}
 			ip4 := ip.To4()
 			if ip4 != nil {
-				records.A = &RecordAddresses{0x7FFFFFFFFFFFFFFF, []net.IP{ip4}}
+				records.IPv4Hint = &RecordAddresses{0x7FFFFFFFFFFFFFFF, []net.IP{ip4}}
 			} else {
-				records.AAAA = &RecordAddresses{0x7FFFFFFFFFFFFFFF, []net.IP{ip}}
+				records.IPv6Hint = &RecordAddresses{0x7FFFFFFFFFFFFFFF, []net.IP{ip}}
 			}
 		}
 	}
@@ -690,7 +692,7 @@ func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 
 	var devices []string
 	for _, pface := range Interfaces {
-		var Hint uint32 = OPT_NONE
+		var Hint uint32 = HINT_NONE
 		for _, h := range strings.Split(pface.Hint, ",") {
 			if h != "" {
 				hint, ok := HintMap[h]

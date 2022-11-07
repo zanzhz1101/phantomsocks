@@ -15,39 +15,41 @@ import (
 )
 
 var HintMap = map[string]uint32{
-	"none":   OPT_NONE,
-	"ttl":    OPT_TTL,
-	"mss":    OPT_MSS,
-	"w-md5":  OPT_WMD5,
-	"n-ack":  OPT_NACK,
-	"w-ack":  OPT_WACK,
-	"w-csum": OPT_WCSUM,
-	"w-seq":  OPT_WSEQ,
+	"none": HINT_NONE,
 
-	"udp":    OPT_UDP,
-	"no-tcp": OPT_NOTCP,
-	"delay":  OPT_DELAY,
+	"http":  HINT_HTTP,
+	"https": HINT_HTTPS,
+	"h3":    HINT_HTTP3,
 
-	"mode2":      OPT_MODE2,
-	"df":         OPT_DF,
-	"sat":        OPT_SAT,
-	"rand":       OPT_RAND,
-	"s-seg":      OPT_SSEG,
-	"1-seg":      OPT_1SEG,
-	"half-tfo":   OPT_HTFO,
-	"keep-alive": OPT_KEEPALIVE,
-	"synx2":      OPT_SYNX2,
-	"zero":       OPT_ZERO,
+	"ipv4": HINT_IPV4,
+	"ipv6": HINT_IPV6,
 
-	"http":     OPT_HTTP,
-	"https":    OPT_HTTPS,
-	"h3":       OPT_HTTP3,
-	"move":     OPT_MOVE,
-	"strip":    OPT_STRIP,
-	"fronting": OPT_FRONTING,
+	"move":     HINT_MOVE,
+	"strip":    HINT_STRIP,
+	"fronting": HINT_FRONTING,
 
-	"ipv4": OPT_IPV4,
-	"ipv6": OPT_IPV6,
+	"ttl":    HINT_TTL,
+	"mss":    HINT_MSS,
+	"w-md5":  HINT_WMD5,
+	"n-ack":  HINT_NACK,
+	"w-ack":  HINT_WACK,
+	"w-csum": HINT_WCSUM,
+	"w-seq":  HINT_WSEQ,
+
+	"udp":    HINT_UDP,
+	"no-tcp": HINT_NOTCP,
+	"delay":  HINT_DELAY,
+
+	"mode2":      HINT_MODE2,
+	"df":         HINT_DF,
+	"sat":        HINT_SAT,
+	"rand":       HINT_RAND,
+	"s-seg":      HINT_SSEG,
+	"1-seg":      HINT_1SEG,
+	"half-tfo":   HINT_HTFO,
+	"keep-alive": HINT_KEEPALIVE,
+	"synx2":      HINT_SYNX2,
+	"zero":       HINT_ZERO,
 }
 
 func DevicePrint() {
@@ -226,8 +228,8 @@ func ICMPMonitor(device string, ipv6 bool) {
 					if ip.TrafficClass > 4 {
 						ttl = ip.TrafficClass >> 2
 					}
-					ModifyAndSendPacket(&connInfo, fakepayload, OPT_TTL|OPT_WMD5, ttl, 2)
-					ModifyAndSendPacket(&connInfo, connInfo.TCP.Payload, OPT_TTL, 64, 1)
+					ModifyAndSendPacket(&connInfo, fakepayload, HINT_TTL|HINT_WMD5, ttl, 2)
+					ModifyAndSendPacket(&connInfo, connInfo.TCP.Payload, HINT_TTL, 64, 1)
 				}
 			}
 		} else {
@@ -244,8 +246,8 @@ func ICMPMonitor(device string, ipv6 bool) {
 					if ip.TOS > 4 {
 						ttl = ip.TOS >> 2
 					}
-					ModifyAndSendPacket(&connInfo, fakepayload, OPT_TTL|OPT_WMD5, ttl, 2)
-					ModifyAndSendPacket(&connInfo, connInfo.TCP.Payload, OPT_TTL, 64, 1)
+					ModifyAndSendPacket(&connInfo, fakepayload, HINT_TTL|HINT_WMD5, ttl, 2)
+					ModifyAndSendPacket(&connInfo, connInfo.TCP.Payload, HINT_TTL, 64, 1)
 				}
 			}
 		}
@@ -291,20 +293,20 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 		Window:     connInfo.TCP.Window,
 	}
 
-	if hint&OPT_WMD5 != 0 {
+	if hint&HINT_WMD5 != 0 {
 		tcpLayer.Options = []layers.TCPOption{
 			layers.TCPOption{19, 16, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
 		}
-	} else if hint&OPT_WTIME != 0 {
+	} else if hint&HINT_WTIME != 0 {
 		tcpLayer.Options = []layers.TCPOption{
 			layers.TCPOption{8, 8, []byte{0, 0, 0, 0, 0, 0, 0, 0}},
 		}
 	}
 
-	if hint&OPT_NACK != 0 {
+	if hint&HINT_NACK != 0 {
 		tcpLayer.ACK = false
 		tcpLayer.Ack = 0
-	} else if hint&OPT_WACK != 0 {
+	} else if hint&HINT_WACK != 0 {
 		tcpLayer.Ack += uint32(tcpLayer.Window)
 	}
 
@@ -313,11 +315,11 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 	var options gopacket.SerializeOptions
 	options.FixLengths = true
 
-	if hint&OPT_WCSUM == 0 {
+	if hint&HINT_WCSUM == 0 {
 		options.ComputeChecksums = true
 	}
 
-	if hint&OPT_WSEQ != 0 {
+	if hint&HINT_WSEQ != 0 {
 		tcpLayer.Seq--
 		fakepayload := make([]byte, len(payload)+1)
 		fakepayload[0] = 0xFF
@@ -345,7 +347,7 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 	}
 	defer conn.Close()
 
-	if hint&OPT_TTL != 0 {
+	if hint&HINT_TTL != 0 {
 		f, err := conn.File()
 		if err != nil {
 			return err

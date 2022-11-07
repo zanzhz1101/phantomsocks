@@ -25,20 +25,20 @@ func DialConnInfo(laddr, raddr *net.TCPAddr, server *PhantomInterface, payload [
 
 	AddConn(addr, server.Hint)
 
-	if (server.Hint & (OPT_MSS | OPT_TFO | OPT_HTFO | OPT_KEEPALIVE)) != 0 {
+	if (server.Hint & (HINT_MSS | HINT_TFO | HINT_HTFO | HINT_KEEPALIVE)) != 0 {
 		d := net.Dialer{Timeout: timeout, LocalAddr: laddr,
 			Control: func(network, address string, c syscall.RawConn) error {
 				err := c.Control(func(fd uintptr) {
-					if (server.Hint & OPT_MSS) != 0 {
+					if (server.Hint & HINT_MSS) != 0 {
 						syscall.SetsockoptInt(int(fd),
 							syscall.SOL_TCP, syscall.TCP_MAXSEG, int(server.MTU))
 					}
-					if (server.Hint & (OPT_TFO | OPT_HTFO)) != 0 {
+					if (server.Hint & (HINT_TFO | HINT_HTFO)) != 0 {
 						//syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, 30, 1)
 						syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_TOS, tfo_id<<2)
 						syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_TTL, int(server.TTL))
 					}
-					if (server.Hint & OPT_KEEPALIVE) != 0 {
+					if (server.Hint & HINT_KEEPALIVE) != 0 {
 						syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, 1)
 					}
 				})

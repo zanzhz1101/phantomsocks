@@ -545,6 +545,7 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 				if SvcParamEnd > responseLen {
 					break
 				}
+				records.ALPN |= HINT_ALPN
 				switch SvcParamKey {
 				case 1:
 					for offset+1 < SvcParamEnd {
@@ -1178,18 +1179,18 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 	}
 
 	_request := request
+	_qtype := uint16(qtype)
 	if u.RawQuery != "" {
+		if records.ALPN&HINT_IPV6 != 0 {
+			_qtype = 28
+		}
+
 		options = ParseOptions(u.RawQuery)
 
 		if options.Type == "A" && qtype == 28 {
 			return records.Index, records.BuildResponse(request, qtype, 0)
 		} else if options.Type == "AAAA" && qtype == 1 {
 			return records.Index, records.BuildResponse(request, qtype, 0)
-		}
-
-		_qtype := uint16(qtype)
-		if records.ALPN&HINT_IPV6 != 0 {
-			_qtype = 28
 		}
 
 		if options.ECS != "" || _qtype != uint16(qtype) {
@@ -1221,7 +1222,7 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 
 	records.GetAnswers(response, options)
 
-	switch qtype {
+	switch _qtype {
 	case 1:
 		if records.IPv4Hint == nil && options.Fallback != nil {
 			if options.Fallback.To4() != nil {
@@ -1230,7 +1231,7 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 			}
 		}
 		if records.IPv4Hint == nil {
-			logPrintln(4, "request:", name, "no answer")
+			logPrintln(4, "request:", name, qtype,"no answer")
 			records.IPv4Hint = &RecordAddresses{0, []net.IP{}}
 			return 0, records.BuildResponse(request, qtype, 0)
 		}
@@ -1243,7 +1244,7 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 			}
 		}
 		if records.IPv6Hint == nil {
-			logPrintln(4, "request:", name, "no answer")
+			logPrintln(4, "request:", name, qtype, "no answer")
 			records.IPv6Hint = &RecordAddresses{0, []net.IP{}}
 			return 0, records.BuildResponse(request, qtype, 0)
 		}

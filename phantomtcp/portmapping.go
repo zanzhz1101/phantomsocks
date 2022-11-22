@@ -1,7 +1,6 @@
 package phantomtcp
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -267,14 +266,13 @@ func TCPMapping(Address string, Hosts string) error {
 		go func() {
 			remote, err := net.Dial("tcp", Host)
 			if err != nil {
-				fmt.Println(err)
+				logPrintln(1, err)
 				return
 			}
 
 			go io.Copy(client, remote)
 			_, err = io.Copy(remote, client)
 			if err != nil {
-				fmt.Println(err)
 				return
 			}
 		}()

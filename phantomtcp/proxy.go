@@ -329,7 +329,7 @@ func SNIProxy(client net.Conn) {
 		}
 	}
 
-	tcp_redirect(client, &net.TCPAddr{Port: port}, host, b[:])
+	tcp_redirect(client, &net.TCPAddr{Port: port}, host, b[:n])
 }
 
 func RedirectProxy(client net.Conn) {

@@ -460,9 +460,6 @@ func LoadConfig(filename string) error {
 							log.Println(string(line), err)
 							return err
 						}
-					} else if keys[0] == "tcpmapping" {
-						mapping := strings.SplitN(keys[1], ">", 2)
-						go TCPMapping(mapping[0], mapping[1])
 					} else if keys[0] == "udpmapping" {
 						mapping := strings.SplitN(keys[1], ">", 2)
 						go UDPMapping(mapping[0], mapping[1])

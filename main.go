@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"crypto/tls"
 	"os"
 	"os/signal"
 	"runtime"
@@ -22,12 +23,29 @@ var MaxProcs int = 1
 var PassiveMode bool = false
 var allowlist map[string]bool = nil
 
-func ListenAndServe(listenAddr string, serve func(net.Conn)) {
-	l, err := net.Listen("tcp", listenAddr)
-	if err != nil {
-		log.Panic(err)
+func ListenAndServe(addr string, key string, serve func(net.Conn)) {
+	var l net.Listener = nil
+	keys := strings.Split(key, ",")
+	if len(keys) == 2 {
+		cer, err := tls.LoadX509KeyPair(keys[0], keys[1])
+		if err != nil {
+			fmt.Println("TLS", err)
+			return
+		}
+		config := &tls.Config{Certificates: []tls.Certificate{cer}}
+		l, err = tls.Listen("tcp", addr, config)
+		if err != nil {
+			fmt.Println("TLS:", err)
+			return
+		}
+	} else {
+		var err error
+		l, err = net.Listen("tcp", addr)
+		if err != nil {
+			fmt.Println("Serve:", err)
+		}
 	}
-
+				
 	if allowlist != nil {
 		for {
 			client, err := l.Accept()
@@ -105,7 +123,7 @@ func DNSServer(listenAddr string) error {
 	defer conn.Close()
 
 	fmt.Println("DNS:", listenAddr)
-	go ListenAndServe(listenAddr, ptcp.DNSTCPServer)
+	go ListenAndServe(listenAddr, "", ptcp.DNSTCPServer)
 
 	data := make([]byte, 512)
 	for {
@@ -201,33 +219,55 @@ func StartService() {
 			go func(addr string) {
 				fmt.Println("DoH:", addr)
 				http.HandleFunc("/dns-query", ptcp.DoHServer)
-				err := http.ListenAndServeTLS(addr, "cert.pem", "key.pem", nil)
+				keys := strings.Split(service.PrivateKey, ",")
+				err := http.ListenAndServeTLS(addr, keys[0], keys[1], nil)
 				if err != nil {
 					fmt.Println("DoH:", err)
 				}
 			}(service.Address)
 		case "socks":
 			fmt.Println("Socks:", service.Address)
-			go ListenAndServe(service.Address, ptcp.SocksProxy)
+			go ListenAndServe(service.Address, service.PrivateKey, ptcp.SocksProxy)
 			go ptcp.SocksUDPProxy(service.Address)
 			default_socks = service.Address
 		case "redirect":
 			fmt.Println("Redirect:", service.Address)
-			go ListenAndServe(service.Address, ptcp.RedirectProxy)
+			go ListenAndServe(service.Address, service.PrivateKey, ptcp.RedirectProxy)
 		case "tproxy":
 			fmt.Println("TProxy:", service.Address)
 			go ptcp.TProxyUDP(service.Address)
 		case "tcp":
-			go ptcp.TCPMapping(service.Address, service.Peers[0].Endpoint)
+			fmt.Println("TCP:", service.Address, service.Peers[0].Endpoint)
+			var l net.Listener
+			keys := strings.Split(service.PrivateKey, ",")
+			if len(keys) == 2 {
+				cer, err := tls.LoadX509KeyPair(keys[0], keys[1])
+				if err == nil {
+					config := &tls.Config{Certificates: []tls.Certificate{cer}}
+					l, err = tls.Listen("tcp", service.Address, config)
+				}
+			} else {
+				if service.Address[0] == '[' {
+					l, err = net.Listen("tcp6", service.Address)
+				} else {
+					l, err = net.Listen("tcp", service.Address)
+				}
+			}
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			go ptcp.TCPMapping(l, service.Peers[0].Endpoint)
 		case "udp":
 			go ptcp.UDPMapping(service.Address, service.Peers[0].Endpoint)
 		case "pac":
 			if default_socks != "" {
 				go PACServer(service.Address, default_socks)
 			}
-		case "sniproxy":
-			fmt.Println("SNI:", service.Address)
-			go ListenAndServe(service.Address, ptcp.SNIProxy)
+		case "reverse":
+			fmt.Println("Reverse:", service.Address)
+			go ListenAndServe(service.Address, service.PrivateKey, ptcp.SNIProxy)
 			go ptcp.QUICProxy(service.Address)
 		}
 	}

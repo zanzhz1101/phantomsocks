@@ -228,32 +228,12 @@ func UDPMapping(Address string, Target string) error {
 	return nil
 }
 
-func TCPMapping(Address string, Hosts string) error {
-	serverAddr, err := net.ResolveTCPAddr("tcp", Address)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-
-	var l *net.TCPListener
-	if Address[0] == '[' {
-		l, err = net.ListenTCP("tcp6", serverAddr)
-	} else {
-		l, err = net.ListenTCP("tcp", serverAddr)
-	}
-
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	defer l.Close()
-
-	logPrintln(1, "TCPMapping:", Address, Hosts)
+func TCPMapping(Listener net.Listener, Hosts string) error {
+	defer Listener.Close()
 
 	HostList := strings.Split(Hosts, ",")
-
 	for {
-		client, err := l.AcceptTCP()
+		client, err := Listener.Accept()
 		if err != nil {
 			log.Println(err)
 			return err

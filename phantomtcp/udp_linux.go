@@ -53,14 +53,14 @@ func TProxyUDP(address string) {
 			continue
 		}
 
-		pface := ConfigLookup(host)
+		pface := DefaultProfile.GetInterface(host)
 		if pface.Hint&HINT_UDP == 0 {
 			if pface.Hint&(HINT_HTTP3) == 0 {
-				logPrintln(4, "TProxy(UDP):", srcAddr, "->", dstAddr, "not allow")
+				logPrintln(4, "TProxy(UDP):", srcAddr, "->", host, "not allow")
 				continue
 			}
 			if GetQUICVersion(data[:n]) == 0 {
-				logPrintln(4, "TProxy(UDP):", srcAddr, "->", dstAddr, "not h3")
+				logPrintln(4, "TProxy(UDP):", srcAddr, "->", host, "not h3")
 				continue
 			}
 		}

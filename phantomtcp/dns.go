@@ -1150,7 +1150,7 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 	var response []byte
 	var err error
 
-	pface := ConfigLookup(name)
+	pface := DefaultProfile.GetInterface(name)
 	var options ServerOptions
 	DNS := ""
 	if pface != nil {
@@ -1231,7 +1231,7 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 			}
 		}
 		if records.IPv4Hint == nil {
-			logPrintln(4, "request:", name, qtype,"no answer")
+			logPrintln(4, "request:", name, qtype, "no answer")
 			records.IPv4Hint = &RecordAddresses{0, []net.IP{}}
 			return 0, records.BuildResponse(request, qtype, 0)
 		}

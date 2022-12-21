@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"crypto/tls"
 	"os"
 	"os/signal"
 	"runtime"
@@ -45,7 +45,7 @@ func ListenAndServe(addr string, key string, serve func(net.Conn)) {
 			fmt.Println("Serve:", err)
 		}
 	}
-				
+
 	if allowlist != nil {
 		for {
 			client, err := l.Accept()
@@ -179,7 +179,7 @@ func StartService() {
 	devices := ptcp.CreateInterfaces(ServiceConfig.Interfaces)
 
 	for _, filename := range strings.Split(ServiceConfig.ConfigFiles, ",") {
-		err := ptcp.LoadConfig(filename)
+		err := ptcp.LoadProfile(filename)
 		if err != nil {
 			if ptcp.LogLevel > 0 {
 				log.Println(err)
@@ -216,15 +216,14 @@ func StartService() {
 				}
 			}(service.Address)
 		case "doh":
-			go func(addr string) {
+			go func(addr string, certs []string) {
 				fmt.Println("DoH:", addr)
 				http.HandleFunc("/dns-query", ptcp.DoHServer)
-				keys := strings.Split(service.PrivateKey, ",")
-				err := http.ListenAndServeTLS(addr, keys[0], keys[1], nil)
+				err := http.ListenAndServeTLS(addr, certs[0], certs[1], nil)
 				if err != nil {
 					fmt.Println("DoH:", err)
 				}
-			}(service.Address)
+			}(service.Address, strings.Split(service.PrivateKey, ","))
 		case "socks":
 			fmt.Println("Socks:", service.Address)
 			go ListenAndServe(service.Address, service.PrivateKey, ptcp.SocksProxy)

@@ -555,7 +555,7 @@ func RedirectDNS() {
 			continue
 		}
 
-		server := ConfigLookup(qname)
+		server := DefaultProfile.GetInterface(qname)
 		if server != nil {
 			logPrintln(1, qname, server)
 			_, response := NSRequest(request, true)

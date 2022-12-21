@@ -49,7 +49,7 @@ func SocksProxy(client net.Conn) {
 				port = int(binary.BigEndian.Uint16(b[4:6]))
 
 				var ok bool
-				pface, ok = DomainMap[ip.String()]
+				pface, ok = DefaultProfile.DomainMap[ip.String()]
 				if ok && pface == nil {
 					// 0x02: connection not allowed by ruleset
 					client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
@@ -63,7 +63,7 @@ func SocksProxy(client net.Conn) {
 				}
 				host = string(b[1 : addrLen+1])
 				port = int(binary.BigEndian.Uint16(b[n-2:]))
-				pface = ConfigLookup(host)
+				pface = DefaultProfile.GetInterface(host)
 				if pface == nil {
 					// 0x02: connection not allowed by ruleset
 					client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
@@ -78,7 +78,7 @@ func SocksProxy(client net.Conn) {
 				port = int(binary.BigEndian.Uint16(b[16:18]))
 
 				var ok bool
-				pface, ok = DomainMap[ip.String()]
+				pface, ok = DefaultProfile.DomainMap[ip.String()]
 				if ok && pface == nil {
 					// 0x02: connection not allowed by ruleset
 					client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
@@ -109,7 +109,7 @@ func SocksProxy(client net.Conn) {
 							return
 						}
 						host = Nose[index]
-						pface = ConfigLookup(host)
+						pface = DefaultProfile.GetInterface(host)
 						if pface == nil {
 							client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
 							return
@@ -372,7 +372,7 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 		}
 		port = addr.Port
 
-		pface := ConfigLookup(domain)
+		pface := DefaultProfile.GetInterface(domain)
 		if pface.Hint&HINT_NOTCP != 0 {
 			time.Sleep(time.Second)
 			return
@@ -394,10 +394,11 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 				if length > 0 {
 					_domain := string(header[offset : offset+length])
 					if domain != _domain {
-						pface = ConfigLookup(domain)
+						pface = DefaultProfile.GetInterface(domain)
 						if pface == nil {
 							return
 						}
+						domain = _domain
 					}
 				}
 
@@ -501,7 +502,7 @@ func QUICProxy(address string) {
 		} else {
 			SNI := GetQUICSNI(data[:n])
 			if SNI != "" {
-				server := ConfigLookup(SNI)
+				server := DefaultProfile.GetInterface(SNI)
 				if server.Hint&HINT_UDP == 0 {
 					continue
 				}
@@ -604,7 +605,7 @@ func SocksUDPProxy(address string) {
 					return
 				}
 				host = Nose[index]
-				server := ConfigLookup(host)
+				server := DefaultProfile.GetInterface(host)
 				if server.Protocol != 0 {
 					continue
 				}

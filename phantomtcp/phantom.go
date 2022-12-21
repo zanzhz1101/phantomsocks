@@ -21,6 +21,7 @@ type ServiceConfig struct {
 	Protocol   string `json:"protocol,omitempty"`
 	Address    string `json:"address,omitempty"`
 	PrivateKey string `json:"privatekey,omitempty"`
+	Profile    string `json:"profile,omitempty"`
 
 	Peers []Peer `json:"peers,omitempty"`
 }
@@ -71,7 +72,10 @@ type PhantomInterface struct {
 	Address  string
 }
 
-var DomainMap map[string]*PhantomInterface
+type PhantomProfile struct {
+	DomainMap map[string]*PhantomInterface
+}
+var DefaultProfile *PhantomProfile = nil
 var DefaultInterface *PhantomInterface = nil
 
 var SubdomainDepth = 2
@@ -132,8 +136,8 @@ func logPrintln(level int, v ...interface{}) {
 	}
 }
 
-func ConfigLookup(name string) *PhantomInterface {
-	config, ok := DomainMap[name]
+func (profile *PhantomProfile) GetInterface(name string) *PhantomInterface {
+	config, ok := profile.DomainMap[name]
 	if ok {
 		return config
 	}
@@ -145,7 +149,7 @@ func ConfigLookup(name string) *PhantomInterface {
 			break
 		}
 		offset += off
-		config, ok = DomainMap[name[offset:]]
+		config, ok = profile.DomainMap[name[offset:]]
 		if ok {
 			return config
 		}
@@ -155,14 +159,16 @@ func ConfigLookup(name string) *PhantomInterface {
 	return DefaultInterface
 }
 
-func GetConfig(name string) *PhantomInterface {
-	config, ok := DomainMap[name]
+/*
+func (profile *PhantomProfile) GetInterface(name string) *PhantomInterface {
+	config, ok := profile.DomainMap[name]
 	if ok {
 		return config
 	}
 
 	return DefaultInterface
 }
+*/
 
 func GetHost(b []byte) (offset int, length int) {
 	offset = bytes.Index(b, []byte("Host: "))
@@ -420,7 +426,7 @@ func getMyIPv6() net.IP {
 	return nil
 }
 
-func LoadConfig(filename string) error {
+func LoadProfile(filename string) error {
 	conf, err := os.Open(filename)
 	if err != nil {
 		return err
@@ -471,9 +477,9 @@ func LoadConfig(filename string) error {
 								records := result.(*DNSRecords)
 								DNSCache.Store(keys[0], records)
 							}
-							s, ok := DomainMap[quote]
+							s, ok := DefaultProfile.DomainMap[quote]
 							if ok {
-								DomainMap[keys[0]] = s
+								DefaultProfile.DomainMap[keys[0]] = s
 							}
 							continue
 						} else {
@@ -525,10 +531,10 @@ func LoadConfig(filename string) error {
 							}
 
 							if ip == nil {
-								DomainMap[keys[0]] = CurrentInterface
+								DefaultProfile.DomainMap[keys[0]] = CurrentInterface
 								DNSCache.Store(keys[0], records)
 							} else {
-								DomainMap[ip.String()] = CurrentInterface
+								DefaultProfile.DomainMap[ip.String()] = CurrentInterface
 								DNSCache.Store(ip.String(), records)
 							}
 						}
@@ -545,22 +551,22 @@ func LoadConfig(filename string) error {
 					} else {
 						addr, err := net.ResolveTCPAddr("tcp", keys[0])
 						if err == nil {
-							DomainMap[addr.String()] = CurrentInterface
+							DefaultProfile.DomainMap[addr.String()] = CurrentInterface
 						} else {
 							_, ipnet, err := net.ParseCIDR(keys[0])
 							if err == nil {
-								DomainMap[ipnet.String()] = CurrentInterface
+								DefaultProfile.DomainMap[ipnet.String()] = CurrentInterface
 							} else {
 								ip := net.ParseIP(keys[0])
 								if ip != nil {
-									DomainMap[ip.String()] = CurrentInterface
+									DefaultProfile.DomainMap[ip.String()] = CurrentInterface
 								} else {
 									if CurrentInterface.DNS != "" || CurrentInterface.Protocol != 0 {
-										DomainMap[keys[0]] = CurrentInterface
+										DefaultProfile.DomainMap[keys[0]] = CurrentInterface
 										records := new(DNSRecords)
 										DNSCache.Store(keys[0], records)
 									} else {
-										DomainMap[keys[0]] = nil
+										DefaultProfile.DomainMap[keys[0]] = nil
 									}
 								}
 							}
@@ -624,7 +630,7 @@ func LoadHosts(filename string) error {
 				offset++
 			}
 
-			server := ConfigLookup(name)
+			server := DefaultProfile.GetInterface(name)
 			if ok && server.Hint != 0 {
 				records.Index = uint32(len(Nose))
 				records.ALPN = server.Hint & HINT_DNS
@@ -649,7 +655,7 @@ func LoadHosts(filename string) error {
 
 func GetPAC(address string) string {
 	rule := ""
-	for host := range DomainMap {
+	for host := range DefaultProfile.DomainMap {
 		rule += fmt.Sprintf("\"%s\":1,\n", host)
 	}
 	Context := `var proxy = 'SOCKS %s';
@@ -675,7 +681,7 @@ function FindProxyForURL(url, host) {
 var InterfaceMap map[string]PhantomInterface
 
 func CreateInterfaces(Interfaces []InterfaceConfig) []string {
-	DomainMap = make(map[string]*PhantomInterface)
+	DefaultProfile = &PhantomProfile{make(map[string]*PhantomInterface)}
 	InterfaceMap = make(map[string]PhantomInterface)
 
 	contains := func(a []string, x string) bool {

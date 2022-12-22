@@ -18,6 +18,7 @@ import (
 	proxy "github.com/macronut/phantomsocks/proxy"
 )
 
+var ConfigFile string = "config.json"
 var LogLevel int = 0
 var MaxProcs int = 1
 var PassiveMode bool = false
@@ -142,7 +143,7 @@ func DNSServer(listenAddr string) error {
 }
 
 func StartService() {
-	conf, err := os.Open("config.json")
+	conf, err := os.Open(ConfigFile)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -155,12 +156,12 @@ func StartService() {
 	conf.Close()
 
 	var ServiceConfig struct {
-		ConfigFiles       string `json:"config,omitempty"`
-		HostsFile         string `json:"hosts,omitempty"`
-		SystemProxy       string `json:"proxy,omitempty"`
-		Clients           string `json:"clients,omitempty"`
 		VirtualAddrPrefix int    `json:"vaddrprefix,omitempty"`
+		SystemProxy       string `json:"proxy,omitempty"`
+		HostsFile         string `json:"hosts,omitempty"`
 
+		Clients    []string               `json:"clients,omitempty"`
+		Profiles   []string               `json:"profiles,omitempty"`
 		Services   []ptcp.ServiceConfig   `json:"services,omitempty"`
 		Interfaces []ptcp.InterfaceConfig `json:"interfaces,omitempty"`
 	}
@@ -178,7 +179,7 @@ func StartService() {
 	ptcp.PassiveMode = PassiveMode
 	devices := ptcp.CreateInterfaces(ServiceConfig.Interfaces)
 
-	for _, filename := range strings.Split(ServiceConfig.ConfigFiles, ",") {
+	for _, filename := range ServiceConfig.Profiles {
 		err := ptcp.LoadProfile(filename)
 		if err != nil {
 			if ptcp.LogLevel > 0 {
@@ -197,9 +198,9 @@ func StartService() {
 		}
 	}
 
-	if ServiceConfig.Clients != "" {
+	if len(ServiceConfig.Clients) > 0 {
 		allowlist = make(map[string]bool)
-		list := strings.Split(ServiceConfig.Clients, ",")
+		list := ServiceConfig.Clients
 		for _, c := range list {
 			allowlist[c] = true
 		}
@@ -308,9 +309,10 @@ func main() {
 	var flagServiceStop bool
 
 	if len(os.Args) > 1 {
-		flag.IntVar(&LogLevel, "log", 0, "LogLevel")
-		flag.IntVar(&MaxProcs, "maxprocs", 0, "MaxProcesses")
-		flag.BoolVar(&PassiveMode, "passive", false, "PassiveMode")
+		flag.StringVar(&ConfigFile, "c", "config.json", "Config file")
+		flag.IntVar(&LogLevel, "log", 0, "Log level")
+		flag.IntVar(&MaxProcs, "maxprocs", 0, "Max processes")
+		flag.BoolVar(&PassiveMode, "passive", false, "Passive mode")
 		flag.BoolVar(&flagServiceInstall, "install", false, "Install service")
 		flag.BoolVar(&flagServiceRemove, "remove", false, "Remove service")
 		flag.BoolVar(&flagServiceStart, "start", false, "Start service")

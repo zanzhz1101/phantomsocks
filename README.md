@@ -21,9 +21,9 @@ Usage of ./phantomsocks:
 ### config.json:
 ```
 {
-    "config": "1.conf,2.conf,3.conf",
     "vaddrprefix": 6,
     "proxy": "socks://address:port",
+    "profiles": ["1.conf", "2.conf", "3.conf"],
     "services": [
         {
             "name": "dns",

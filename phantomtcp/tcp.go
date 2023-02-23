@@ -290,6 +290,8 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 			return nil, nil, errors.New("connection does not exist")
 		}
 
+		logPrintln(3, host, conn.RemoteAddr(), "connected")
+
 		if (pface.Hint & HINT_DELAY) != 0 {
 			time.Sleep(time.Second)
 		}

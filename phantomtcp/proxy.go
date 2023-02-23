@@ -125,6 +125,7 @@ func SocksProxy(client net.Conn) {
 				return
 			}
 		} else {
+			logPrintln(3, "unknow from", client.RemoteAddr())
 			return
 		}
 
@@ -373,12 +374,13 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 		port = addr.Port
 
 		pface := DefaultProfile.GetInterface(domain)
-		if pface.Hint&HINT_NOTCP != 0 {
-			time.Sleep(time.Second)
-			return
-		}
 
-		if domain != "" || pface.Protocol != 0 || pface.Hint != 0 {
+		if pface != nil && (pface.Protocol != 0 || pface.Hint != 0) {
+			if pface.Hint&HINT_NOTCP != 0 {
+				time.Sleep(time.Second)
+				return
+			}
+
 			if header == nil {
 				b := make([]byte, 1460)
 				n, err := client.Read(b)

@@ -19,8 +19,8 @@ func ReadAtLeast() {
 func SocksProxy(client net.Conn) {
 	defer client.Close()
 
-	var conn net.Conn
-	var pface *PhantomInterface = nil
+	host := ""
+	var addr net.TCPAddr
 	{
 		var b [1500]byte
 		n, err := client.Read(b[:])
@@ -29,9 +29,6 @@ func SocksProxy(client net.Conn) {
 			return
 		}
 
-		host := ""
-		var ip net.IP
-		port := 0
 		var reply []byte
 		if b[0] == 0x05 {
 			client.Write([]byte{0x05, 0x00})
@@ -45,16 +42,10 @@ func SocksProxy(client net.Conn) {
 				if n < 6 {
 					return
 				}
-				ip = net.IP(b[:4])
-				port = int(binary.BigEndian.Uint16(b[4:6]))
-
-				var ok bool
-				pface, ok = DefaultProfile.DomainMap[ip.String()]
-				if ok && pface == nil {
-					// 0x02: connection not allowed by ruleset
-					client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
-					return
-				}
+				addr.IP = net.IP(b[:4])
+				addr.Port = int(binary.BigEndian.Uint16(b[4:6]))
+				// 0x02: connection not allowed by ruleset
+				// client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
 			case 0x03: //Domain
 				n, err = client.Read(b[:])
 				addrLen := b[0]
@@ -62,30 +53,21 @@ func SocksProxy(client net.Conn) {
 					return
 				}
 				host = string(b[1 : addrLen+1])
-				port = int(binary.BigEndian.Uint16(b[n-2:]))
-				pface = DefaultProfile.GetInterface(host)
-				if pface == nil {
-					// 0x02: connection not allowed by ruleset
-					client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
-					return
-				}
+				addr.Port = int(binary.BigEndian.Uint16(b[n-2:]))
+				// 0x02: connection not allowed by ruleset
+				//client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
 			case 0x04: //IPv6
 				n, err = client.Read(b[:])
 				if n < 18 {
 					return
 				}
-				ip = net.IP(b[:16])
-				port = int(binary.BigEndian.Uint16(b[16:18]))
-
-				var ok bool
-				pface, ok = DefaultProfile.DomainMap[ip.String()]
-				if ok && pface == nil {
-					// 0x02: connection not allowed by ruleset
-					client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
-					return
-				}
+				addr.IP = net.IP(b[:16])
+				addr.Port = int(binary.BigEndian.Uint16(b[16:18]))
+				// 0x02: connection not allowed by ruleset
+				// logPrintln(3, "connection not allowed by ruleset from", client.RemoteAddr())
 			default:
 				// 0x08: address type not supported
+				logPrintln(3, "address type", b[0], "not supported from", client.RemoteAddr())
 				client.Write([]byte{5, 9, 0, 1, 0, 0, 0, 0, 0, 0})
 				return
 			}
@@ -93,7 +75,7 @@ func SocksProxy(client net.Conn) {
 		} else if b[0] == 0x04 {
 			if n > 8 && b[1] == 1 {
 				userEnd := 8 + bytes.IndexByte(b[8:n], 0)
-				port = int(binary.BigEndian.Uint16(b[2:4]))
+				addr.Port = int(binary.BigEndian.Uint16(b[2:4]))
 				if b[4]|b[5]|b[6] == 0 {
 					hostEnd := bytes.IndexByte(b[userEnd+1:n], 0)
 					if hostEnd > 0 {
@@ -109,13 +91,8 @@ func SocksProxy(client net.Conn) {
 							return
 						}
 						host = Nose[index]
-						pface = DefaultProfile.GetInterface(host)
-						if pface == nil {
-							client.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
-							return
-						}
 					} else {
-						ip = net.IP(b[4:8])
+						addr.IP = net.IP(b[4:8])
 					}
 				}
 
@@ -129,129 +106,17 @@ func SocksProxy(client net.Conn) {
 			return
 		}
 
-		if err != nil {
-			logPrintln(1, err)
-			return
+		if err == nil {
+			_, err = client.Write(reply)
 		}
-
-		if host != "" {
-			if pface.Hint == 0 {
-				logPrintln(1, "Socks:", host, port, pface)
-				addr := net.JoinHostPort(host, strconv.Itoa(port))
-				logPrintln(1, "Socks:", addr)
-				conn, err = net.Dial("tcp", addr)
-				if err != nil {
-					logPrintln(1, err)
-					return
-				}
-				_, err = client.Write(reply)
-			} else {
-				logPrintln(1, "Socks:", host, port, pface)
-				_, err = client.Write(reply)
-				if err != nil {
-					logPrintln(1, err)
-					return
-				}
-
-				n, err = client.Read(b[:])
-				if err != nil {
-					logPrintln(1, err)
-					return
-				}
-
-				if b[0] != 0x16 {
-					if pface.Hint&HINT_HTTP3 != 0 {
-						HttpMove(client, "h3", b[:n])
-						return
-					} else if pface.Hint&HINT_HTTPS != 0 {
-						HttpMove(client, "https", b[:n])
-						return
-					} else if pface.Hint&HINT_MOVE != 0 {
-						HttpMove(client, pface.Address, b[:n])
-						return
-					} else if pface.Hint&HINT_STRIP != 0 {
-						if pface.Hint&HINT_FRONTING != 0 {
-							conn, err = pface.DialStrip(host, "")
-							host = ""
-						} else {
-							conn, err = pface.DialStrip(host, host)
-						}
-
-						if err != nil {
-							logPrintln(1, err)
-							return
-						}
-						_, err = conn.Write(b[:n])
-					} else {
-						var info *ConnectionInfo
-						conn, info, err = pface.Dial(host, port, b[:n])
-						if err != nil {
-							logPrintln(1, host, err)
-							return
-						}
-
-						if info != nil {
-							pface.Keep(client, conn, info)
-							return
-						}
-					}
-				} else {
-					conn, _, err = pface.Dial(host, port, b[:n])
-					if err != nil {
-						logPrintln(1, host, err)
-						return
-					}
-				}
-			}
-		} else {
-			if pface != nil {
-				host = ip.String()
-				logPrintln(1, "Socks:", host, port, pface)
-				client.Write(reply)
-				n, err = client.Read(b[:])
-				if err != nil {
-					logPrintln(1, err)
-					return
-				}
-
-				result, ok := DNSCache.Load(host)
-				var addresses []net.IP
-				if ok {
-					records := result.(*DNSRecords)
-					if records.IPv6Hint != nil {
-						addresses = make([]net.IP, len(records.IPv6Hint.Addresses))
-						copy(addresses, records.IPv6Hint.Addresses)
-					} else if records.IPv4Hint != nil {
-						addresses = make([]net.IP, len(records.IPv4Hint.Addresses))
-						copy(addresses, records.IPv4Hint.Addresses)
-					}
-				} else {
-					conn, _, err = pface.Dial(host, port, b[:n])
-				}
-			} else {
-				logPrintln(1, "Socks:", ip, port)
-
-				addr := net.TCPAddr{IP: ip, Port: port, Zone: ""}
-				conn, err = net.DialTCP("tcp", nil, &addr)
-				client.Write(reply)
-			}
-		}
-
+		
 		if err != nil {
 			logPrintln(1, err)
 			return
 		}
 	}
 
-	defer conn.Close()
-
-	_, _, err := relay(client, conn)
-	if err != nil {
-		if err, ok := err.(net.Error); ok && err.Timeout() {
-			return
-		}
-		logPrintln(1, "relay error:", err)
-	}
+	tcp_redirect(client, &addr, host, nil)
 }
 
 func validOptionalPort(port string) bool {
@@ -374,7 +239,6 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 		port = addr.Port
 
 		pface := DefaultProfile.GetInterface(domain)
-
 		if pface != nil && (pface.Protocol != 0 || pface.Hint != 0) {
 			if pface.Hint&HINT_NOTCP != 0 {
 				time.Sleep(time.Second)
@@ -453,9 +317,16 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 					}
 				}
 			}
-		} else {
+		} else if addr.IP != nil {
 			logPrintln(1, "Redirect:", client.RemoteAddr(), "->", addr)
 			conn, err = net.DialTCP("tcp", nil, addr)
+			if err != nil {
+				logPrintln(1, domain, err)
+				return
+			}
+		} else {
+			logPrintln(1, "Redirect:", client.RemoteAddr(), "->", domain, port)
+			conn, err = net.Dial("tcp", domain + ":" + strconv.Itoa(port))
 			if err != nil {
 				logPrintln(1, domain, err)
 				return

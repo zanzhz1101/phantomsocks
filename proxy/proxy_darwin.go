@@ -65,9 +65,8 @@ func SetProxy(dev, proxy string, state bool) error {
 			continue
 		}
 
-		_name := strings.Split(lines[linesLen-2], " ")
+		name = lines[linesLen-2][4:]
 		_en := strings.Split(lines[linesLen-1], " ")
-		name = _name[len(_name)-1]
 		en := _en[len(_en)-1]
 		en = en[:len(en)-1]
 

@@ -1,5 +1,5 @@
 {
-    "config": "default.conf",
+    "profiles": ["default.conf"],
     "vaddrprefix": 6,
     "services": [
         {

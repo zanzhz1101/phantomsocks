@@ -596,11 +596,19 @@ func (records *DNSRecords) GetAnswers(response []byte, options ServerOptions) {
 	}
 }
 
-func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
-	packA := func(ips []net.IP) (int, []byte) {
+func (records *DNSRecords) PackAnswers(qtype int, minttl uint32) (int, []byte) {
+	packA := func(rec *RecordAddresses) (int, []byte) {
+		var ttl uint32 = 0
+		if rec.TTL > 0 {
+			ttl = uint32(rec.TTL - time.Now().Unix())
+		}
+		if ttl < minttl {
+			ttl = minttl
+		}
+
 		count := 0
 		totalLen := 0
-		for _, ip := range ips {
+		for _, ip := range rec.Addresses {
 			ip4 := ip.To4()
 			if ip4 != nil {
 				count++
@@ -613,7 +621,7 @@ func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 
 		answers := make([]byte, totalLen)
 		length := 0
-		for _, ip := range ips {
+		for _, ip := range rec.Addresses {
 			ip4 := ip.To4()
 			if ip4 != nil {
 				copy(answers[length:], []byte{0xC0, 0x0C, 0x00, 1,
@@ -646,12 +654,12 @@ func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 		if records.IPv4Hint == nil {
 			return 0, nil
 		}
-		return packA(records.IPv4Hint.Addresses)
+		return packA(records.IPv4Hint)
 	case 28:
 		if records.IPv6Hint == nil {
 			return 0, nil
 		}
-		return packA(records.IPv6Hint.Addresses)
+		return packA(records.IPv6Hint)
 	case 65:
 		var totalLen uint16 = 15
 
@@ -692,7 +700,7 @@ func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 
 		answers := make([]byte, totalLen)
 		copy(answers, []byte{0xC0, 0x0C, 0x00, 65, 0x00, 0x01})
-		binary.BigEndian.PutUint32(answers[6:], ttl)
+		binary.BigEndian.PutUint32(answers[6:], minttl)
 		binary.BigEndian.PutUint16(answers[10:], totalLen-12)
 		binary.BigEndian.PutUint16(answers[12:], 1)
 		answers[14] = 0
@@ -755,7 +763,7 @@ func (records *DNSRecords) PackAnswers(qtype int, ttl uint32) (int, []byte) {
 	return 0, nil
 }
 
-func (records DNSRecords) BuildResponse(request []byte, qtype int, ttl uint32) []byte {
+func (records DNSRecords) BuildResponse(request []byte, qtype int, minttl uint32) []byte {
 	response := make([]byte, 1024)
 	copy(response, request)
 	length := len(request)
@@ -814,7 +822,7 @@ func (records DNSRecords) BuildResponse(request []byte, qtype int, ttl uint32) [
 			binary.BigEndian.PutUint16(response[dataLenOffset:], uint16(length-dataLenOffset-2))
 		}
 	} else {
-		count, answer := records.PackAnswers(qtype, ttl)
+		count, answer := records.PackAnswers(qtype, minttl)
 		if count > 0 {
 			binary.BigEndian.PutUint16(response[6:], uint16(count))
 			copy(response[length:], answer)
@@ -1130,14 +1138,22 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 		records = new(DNSRecords)
 	}
 
+	CurrentTime := time.Now().Unix()
+
 	switch qtype {
 	case 1:
 		if records.IPv4Hint != nil {
-			return records.Index, records.BuildResponse(request, qtype, 0)
+			if records.IPv4Hint.TTL == 0 || records.IPv4Hint.TTL > CurrentTime {
+				return records.Index, records.BuildResponse(request, qtype, 60)
+			}
+			records.IPv4Hint = nil
 		}
 	case 28:
 		if records.IPv6Hint != nil {
-			return records.Index, records.BuildResponse(request, qtype, 0)
+			if records.IPv6Hint.TTL == 0 || records.IPv6Hint.TTL > CurrentTime {
+				return records.Index, records.BuildResponse(request, qtype, 60)
+			}
+			records.IPv6Hint = nil
 		}
 	case 65:
 		if records.ALPN&(HINT_ALPN|HINT_HTTP|HINT_HTTPS|HINT_HTTP3) != 0 {

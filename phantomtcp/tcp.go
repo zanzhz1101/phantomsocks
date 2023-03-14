@@ -123,7 +123,7 @@ func GetLocalAddr(name string, ipv6 bool) (*net.TCPAddr, error) {
 			var laddr *net.TCPAddr
 			ip4 := localAddr.IP.To4()
 			if ipv6 {
-				if ip4 != nil || localAddr.IP[0] == 0xfe {
+				if ip4 != nil || localAddr.IP.IsPrivate() {
 					continue
 				}
 				ip := make([]byte, 16)

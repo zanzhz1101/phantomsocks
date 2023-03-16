@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-func DialConnInfo(laddr, raddr *net.TCPAddr, conf *PhantomInterface, payload []byte) (net.Conn, *ConnectionInfo, error) {
+func DialConnInfo(laddr, raddr *net.TCPAddr, pface *PhantomInterface, payload []byte) (net.Conn, *ConnectionInfo, error) {
 	addr := raddr.String()
-	timeout := time.Millisecond * time.Duration(server.Timeout)
+	timeout := time.Millisecond * time.Duration(pface.Timeout)
 
-	AddConn(addr, conf.Hint)
+	AddConn(addr, pface.Hint)
 
 	d := net.Dialer{Timeout: timeout, LocalAddr: laddr}
 	conn, err := d.Dial("tcp", addr)

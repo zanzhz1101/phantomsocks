@@ -27,13 +27,14 @@ type ServiceConfig struct {
 }
 
 type InterfaceConfig struct {
-	Name   string `json:"name,omitempty"`
-	Device string `json:"device,omitempty"`
-	DNS    string `json:"dns,omitempty"`
-	Hint   string `json:"hint,omitempty"`
-	MTU    int    `json:"mtu,omitempty"`
-	TTL    int    `json:"ttl,omitempty"`
-	MAXTTL int    `json:"maxttl,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Device  string `json:"device,omitempty"`
+	DNS     string `json:"dns,omitempty"`
+	Hint    string `json:"hint,omitempty"`
+	MTU     int    `json:"mtu,omitempty"`
+	TTL     int    `json:"ttl,omitempty"`
+	MAXTTL  int    `json:"maxttl,omitempty"`
+	Timeout int    `json:"timeout,omitempty"`
 
 	Protocol   string `json:"protocol,omitempty"`
 	Address    string `json:"address,omitempty"`
@@ -61,12 +62,13 @@ const (
 )
 
 type PhantomInterface struct {
-	Device string
-	DNS    string
-	Hint   uint32
-	MTU    uint16
-	TTL    byte
-	MAXTTL byte
+	Device  string
+	DNS     string
+	Hint    uint32
+	MTU     uint16
+	TTL     byte
+	MAXTTL  byte
+	Timeout int16
 
 	Protocol byte
 	Address  string
@@ -75,6 +77,7 @@ type PhantomInterface struct {
 type PhantomProfile struct {
 	DomainMap map[string]*PhantomInterface
 }
+
 var DefaultProfile *PhantomProfile = nil
 var DefaultInterface *PhantomInterface = nil
 
@@ -126,7 +129,7 @@ const (
 
 const HINT_DNS = HINT_ALPN | HINT_HTTP | HINT_HTTPS | HINT_HTTP3 | HINT_IPV4 | HINT_IPV6
 const HINT_FAKE = HINT_TTL | HINT_WMD5 | HINT_NACK | HINT_WACK | HINT_WCSUM | HINT_WSEQ | HINT_WTIME
-const HINT_MODIFY = HINT_FAKE | HINT_SSEG | HINT_TFO | HINT_HTFO | HINT_MODE2
+const HINT_MODIFY = HINT_FAKE | HINT_SSEG | HINT_TFO | HINT_HTFO | HINT_MODE2 | HINT_MOVE | HINT_STRIP | HINT_FRONTING
 
 var Logger *log.Logger
 
@@ -321,6 +324,7 @@ func HttpMove(conn net.Conn, host string, b []byte) bool {
 	data := make([]byte, 1460)
 	n := 0
 	if host == "" {
+		logPrintln(5, string(b))
 		copy(data[:], []byte("HTTP/1.1 200 OK"))
 		n += 15
 	} else if host == "https" || host == "h3" {

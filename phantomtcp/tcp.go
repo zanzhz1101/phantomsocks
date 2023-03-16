@@ -264,8 +264,9 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 		}
 
 		var synpacket *ConnectionInfo
-		for i := 0; i < 5; i++ {
-			raddr := raddrs[rand.Intn(len(raddrs))]
+		for i := 0; i < len(raddrs); i++ {
+			//raddr := raddrs[rand.Intn(len(raddrs))]
+			raddr := raddrs[i]
 
 			laddr, err := GetLocalAddr(device, raddr.IP.To4() == nil)
 			if err != nil {

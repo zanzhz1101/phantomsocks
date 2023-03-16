@@ -109,7 +109,7 @@ func SocksProxy(client net.Conn) {
 		if err == nil {
 			_, err = client.Write(reply)
 		}
-		
+
 		if err != nil {
 			logPrintln(1, err)
 			return

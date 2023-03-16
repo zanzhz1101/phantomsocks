@@ -11,7 +11,7 @@ func DialConnInfo(laddr, raddr *net.TCPAddr, server *PhantomInterface, payload [
 	var err error
 
 	addr := raddr.String()
-	timeout := time.Millisecond * 1500
+	timeout := time.Millisecond * time.Duration(server.Timeout)
 
 	tfo_id := 0
 	if payload != nil {

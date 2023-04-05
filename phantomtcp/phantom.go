@@ -68,7 +68,7 @@ type PhantomInterface struct {
 	MTU     uint16
 	TTL     byte
 	MAXTTL  byte
-	Timeout int16
+	Timeout uint16
 
 	Protocol byte
 	Address  string
@@ -737,14 +737,19 @@ func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 				devices = append(devices, pface.Device)
 			}
 		}
+		
+		if pface.Timeout == 0 {
+			pface.Timeout = 65535
+		}
 
 		InterfaceMap[pface.Name] = PhantomInterface{
-			Device: pface.Device,
-			DNS:    pface.DNS,
-			Hint:   Hint,
-			MTU:    uint16(pface.MTU),
-			TTL:    byte(pface.TTL),
-			MAXTTL: byte(pface.MAXTTL),
+			Device:  pface.Device,
+			DNS:     pface.DNS,
+			Hint:    Hint,
+			MTU:     uint16(pface.MTU),
+			TTL:     byte(pface.TTL),
+			MAXTTL:  byte(pface.MAXTTL),
+			Timeout: uint16(pface.Timeout),
 
 			Protocol: protocol,
 			Address:  pface.Address,

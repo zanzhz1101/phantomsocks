@@ -3,6 +3,7 @@ package phantomtcp
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -153,6 +154,55 @@ func splitHostPort(hostport string) (host string, port int) {
 	}
 
 	return
+}
+
+func HTTPProxy(client net.Conn) {
+	defer client.Close()
+
+	var b [1500]byte
+	n, err := client.Read(b[:])
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	request := b[:n]
+	var method, host string
+	var port int
+
+	end := bytes.IndexByte(request, '\n')
+	if end < 0 {
+		return
+	}
+
+	fmt.Sscanf(string(request[:end]), "%s%s", &method, &host)
+	host, port = splitHostPort(host)
+	if port == 0 {
+		port = 80
+	}
+
+	if method == "CONNECT" {
+		fmt.Fprint(client, "HTTP/1.1 200 Connection established\r\n\r\n")
+		n, err = client.Read(b[:])
+		if err != nil {
+			logPrintln(1, err)
+			return
+		}
+		tcp_redirect(client, &net.TCPAddr{Port: port}, host, b[:n])
+		return
+	} else {
+		if strings.HasPrefix(host, "http://") {
+			host = host[7:]
+			index := strings.IndexByte(host, '/')
+			if index != -1 {
+				host = host[:index]
+			}
+			request = bytes.Replace(b[:n], []byte("http://"+host), nil, 1)
+			HttpMove(client, "https", request)
+		} else {
+			return
+		}
+	}
 }
 
 func SNIProxy(client net.Conn) {
@@ -324,12 +374,18 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 				logPrintln(1, domain, err)
 				return
 			}
+			if header != nil {
+				conn.Write(header)
+			}
 		} else {
 			logPrintln(1, "Redirect:", client.RemoteAddr(), "->", domain, port)
-			conn, err = net.Dial("tcp", domain + ":" + strconv.Itoa(port))
+			conn, err = net.Dial("tcp", domain+":"+strconv.Itoa(port))
 			if err != nil {
 				logPrintln(1, domain, err)
 				return
+			}
+			if header != nil {
+				conn.Write(header)
 			}
 		}
 	}

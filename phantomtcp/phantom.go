@@ -657,7 +657,14 @@ func LoadHosts(filename string) error {
 	return nil
 }
 
-func GetPAC(address string) string {
+func GetPAC(address string, profile string) string {
+	if profile == "" {
+		Context := `function FindProxyForURL(url, host) {
+	return '%s';
+}`
+		return fmt.Sprintf(Context, address)
+	}
+
 	rule := ""
 	for host := range DefaultProfile.DomainMap {
 		rule += fmt.Sprintf("\"%s\":1,\n", host)
@@ -737,7 +744,7 @@ func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 				devices = append(devices, pface.Device)
 			}
 		}
-		
+
 		if pface.Timeout == 0 {
 			pface.Timeout = 65535
 		}

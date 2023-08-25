@@ -363,7 +363,13 @@ func ModifyAndSendPacket(connInfo *ConnectionInfo, payload []byte, hint uint32, 
 		}
 		defer f.Close()
 		fd := int(f.Fd())
-		err = syscall.SetsockoptInt(fd, syscall.IPPROTO_IP, syscall.IP_TTL, int(ttl))
+		level := syscall.IPPROTO_IP
+		name := syscall.IP_TTL
+		if network == "ip6:tcp" {
+			level = syscall.IPPROTO_IPV6
+			name = syscall.IPV6_UNICAST_HOPS
+		}
+		err = syscall.SetsockoptInt(fd, level, name, int(ttl))
 		if err != nil {
 			return err
 		}

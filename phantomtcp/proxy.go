@@ -310,7 +310,7 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 				if length > 0 {
 					_domain := string(header[offset : offset+length])
 					if domain != _domain {
-						pface = DefaultProfile.GetInterface(domain)
+						pface = DefaultProfile.GetInterface(_domain)
 						if pface == nil {
 							return
 						}

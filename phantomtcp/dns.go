@@ -764,13 +764,14 @@ func (records *DNSRecords) PackAnswers(qtype int, minttl uint32) (int, []byte) {
 }
 
 func (records DNSRecords) BuildResponse(request []byte, qtype int, minttl uint32) []byte {
-	response := make([]byte, 1024)
-	copy(response, request)
 	length := len(request)
-	response[2] = 0x81
-	response[3] = 0x80
 
 	if records.Index > 0 {
+		response := make([]byte, 512)
+		copy(response, request)
+		response[2] = 0x81
+		response[3] = 0x80
+
 		switch qtype {
 		case 1:
 			answer := []byte{0xC0, 0x0C, 0x00, 1,
@@ -821,16 +822,23 @@ func (records DNSRecords) BuildResponse(request []byte, qtype int, minttl uint32
 			binary.BigEndian.PutUint16(response[6:], 1)
 			binary.BigEndian.PutUint16(response[dataLenOffset:], uint16(length-dataLenOffset-2))
 		}
+
+		return response[:length]
 	} else {
 		count, answer := records.PackAnswers(qtype, minttl)
+		response := make([]byte, length + len(answer))
+		copy(response, request)
+		response[2] = 0x81
+		response[3] = 0x80
+
 		if count > 0 {
 			binary.BigEndian.PutUint16(response[6:], uint16(count))
 			copy(response[length:], answer)
 			length += len(answer)
 		}
-	}
 
-	return response[:length]
+		return response[:length]
+	}
 }
 
 func PackQName(name string) []byte {
@@ -1139,6 +1147,7 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 	}
 
 	CurrentTime := time.Now().Unix()
+	IsUnknownType := false
 
 	switch qtype {
 	case 1:
@@ -1160,7 +1169,7 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 			return records.Index, records.BuildResponse(request, qtype, 3600)
 		}
 	default:
-		return records.Index, records.BuildResponse(request, qtype, 3600)
+		IsUnknownType = true
 	}
 
 	var response []byte
@@ -1178,14 +1187,19 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 		return 0, records.BuildResponse(request, qtype, 3600)
 	}
 
-	if DNS == "" {
-		if records.Index == 0 && pface.Protocol != 0 {
-			NoseLock.Lock()
-			records.Index = uint32(len(Nose))
-			Nose = append(Nose, name)
-			NoseLock.Unlock()
+	UseVaddr := (pface.Hint&HINT_MODIFY) != 0 || pface.Protocol != 0
+	if UseVaddr {
+		if DNS == "" {
+			if records.Index == 0 {
+				NoseLock.Lock()
+				records.Index = uint32(len(Nose))
+				Nose = append(Nose, name)
+				NoseLock.Unlock()
+			}
+			return records.Index, records.BuildResponse(request, qtype, 3600)
+		} else if IsUnknownType {
+			return records.Index, records.BuildResponse(request, qtype, 3600)
 		}
-		return records.Index, records.BuildResponse(request, qtype, 3600)
 	}
 
 	u, err := url.Parse(DNS)
@@ -1227,7 +1241,7 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 	case "tfo":
 		response, err = TFOlookup(_request, u.Host)
 	default:
-		logPrintln(1, "unknown protocol")
+		logPrintln(1, "unknown protocol", u.Scheme)
 		return 0, nil
 	}
 
@@ -1236,10 +1250,9 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 		return 0, nil
 	}
 
-	records.GetAnswers(response, options)
-
 	switch _qtype {
 	case 1:
+		records.GetAnswers(response, options)
 		if records.IPv4Hint == nil && options.Fallback != nil {
 			if options.Fallback.To4() != nil {
 				logPrintln(4, "request:", name, "fallback", options.Fallback)
@@ -1253,6 +1266,7 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 		}
 		logPrintln(3, "response:", name, qtype, records.IPv4Hint.Addresses)
 	case 28:
+		records.GetAnswers(response, options)
 		if records.IPv6Hint == nil && options.Fallback != nil {
 			if options.Fallback.To4() == nil {
 				logPrintln(4, "request:", name, "fallback", options.Fallback)
@@ -1265,9 +1279,11 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 			return 0, records.BuildResponse(request, qtype, 0)
 		}
 		logPrintln(3, "response:", name, qtype, records.IPv6Hint.Addresses)
+	default:
+		return 0, response
 	}
 
-	if records.Index == 0 && ((pface.Hint&HINT_MODIFY) != 0 || pface.Protocol != 0) {
+	if UseVaddr && (records.Index == 0) {
 		NoseLock.Lock()
 		records.Index = uint32(len(Nose))
 		Nose = append(Nose, name)

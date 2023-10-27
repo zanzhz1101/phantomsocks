@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -76,6 +77,7 @@ type PhantomInterface struct {
 
 type PhantomProfile struct {
 	DomainMap map[string]*PhantomInterface
+	CIDRMap   map[netip.Prefix]*PhantomInterface
 }
 
 var DefaultProfile *PhantomProfile = nil
@@ -160,6 +162,16 @@ func (profile *PhantomProfile) GetInterface(name string) *PhantomInterface {
 	}
 
 	return DefaultInterface
+}
+
+func (profile *PhantomProfile) GetInterfaceByCIDR(ip netip.Addr) *PhantomInterface {
+	for k, i := range profile.CIDRMap {
+		if k.Contains(ip) {
+			return i
+		}
+	}
+
+	return nil
 }
 
 /*
@@ -557,9 +569,9 @@ func LoadProfile(filename string) error {
 						if err == nil {
 							DefaultProfile.DomainMap[addr.String()] = CurrentInterface
 						} else {
-							_, ipnet, err := net.ParseCIDR(keys[0])
+							ipnet, err := netip.ParsePrefix(keys[0])
 							if err == nil {
-								DefaultProfile.DomainMap[ipnet.String()] = CurrentInterface
+								DefaultProfile.CIDRMap[ipnet] = CurrentInterface
 							} else {
 								ip := net.ParseIP(keys[0])
 								if ip != nil {
@@ -692,7 +704,7 @@ function FindProxyForURL(url, host) {
 var InterfaceMap map[string]PhantomInterface
 
 func CreateInterfaces(Interfaces []InterfaceConfig) []string {
-	DefaultProfile = &PhantomProfile{make(map[string]*PhantomInterface)}
+	DefaultProfile = &PhantomProfile{DomainMap: make(map[string]*PhantomInterface), CIDRMap: make(map[netip.Prefix]*PhantomInterface)}
 	InterfaceMap = make(map[string]PhantomInterface)
 
 	contains := func(a []string, x string) bool {

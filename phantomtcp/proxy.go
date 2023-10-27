@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -288,7 +289,19 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 		}
 		port = addr.Port
 
-		pface := DefaultProfile.GetInterface(domain)
+		var pface *PhantomInterface
+		if domain == "" {
+			domain = addr.IP.String()
+			pfacet, ok := DefaultProfile.DomainMap[domain]
+			if ok {
+				pface = pfacet
+			} else {
+				pface = DefaultProfile.GetInterfaceByCIDR(netip.MustParseAddr(domain))
+			}
+		} else {
+			pface = DefaultProfile.GetInterface(domain)
+		}
+
 		if pface != nil && (pface.Protocol != 0 || pface.Hint != 0) {
 			if pface.Hint&HINT_NOTCP != 0 {
 				time.Sleep(time.Second)

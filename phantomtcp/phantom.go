@@ -182,18 +182,20 @@ func (profile *PhantomProfile) GetInterfaceByIP(ip net.IP) *PhantomInterface {
 	ip4 := ip.To4()
 	if ip4 != nil {
 		ip := binary.BigEndian.Uint32(ip4)
-		index := sort.Search(len(profile.IPv4Ranges), func(i int) bool {
+		lenRanges := len(profile.IPv4Ranges)
+		index := sort.Search(lenRanges, func(i int) bool {
 			return profile.IPv4Ranges[i].End > ip
 		})
-		if ip >= profile.IPv4Ranges[index].Start {
+		if index >= 0 && index < lenRanges && ip >= profile.IPv4Ranges[index].Start {
 			return profile.IPv4Ranges[index].Interface
 		}
 	} else {
+		lenRanges := len(profile.IPv6Ranges)
 		ip := binary.BigEndian.Uint64(ip[:16])
 		index := sort.Search(len(profile.IPv6Ranges), func(i int) bool {
 			return profile.IPv6Ranges[i].End > ip
 		})
-		if ip >= profile.IPv6Ranges[index].Start {
+		if index >= 0 && index < lenRanges && ip >= profile.IPv6Ranges[index].Start {
 			return profile.IPv6Ranges[index].Interface
 		}
 	}

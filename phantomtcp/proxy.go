@@ -290,7 +290,8 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 
 		var pface *PhantomInterface = nil
 		if domain == "" {
-			pface, ok := DefaultProfile.DomainMap[domain]
+			var ok bool
+			pface, ok = DefaultProfile.DomainMap[domain]
 			if !ok {
 				pface = DefaultProfile.GetInterfaceByIP(addr.IP)
 			}
@@ -300,6 +301,8 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 		} else {
 			pface = DefaultProfile.GetInterface(domain)
 		}
+
+		logPrintln(1, pface)
 
 		if pface != nil && (pface.Protocol != 0 || pface.Hint != 0) {
 			if pface.Hint&HINT_NOTCP != 0 {

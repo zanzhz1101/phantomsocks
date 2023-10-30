@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -75,9 +76,22 @@ type PhantomInterface struct {
 	Address  string
 }
 
+type IPv4Range struct {
+	Start     uint32
+	End       uint32
+	Interface *PhantomInterface
+}
+
+type IPv6Range struct {
+	Start     uint64
+	End       uint64
+	Interface *PhantomInterface
+}
+
 type PhantomProfile struct {
-	DomainMap map[string]*PhantomInterface
-	CIDRMap   map[netip.Prefix]*PhantomInterface
+	DomainMap  map[string]*PhantomInterface
+	IPv4Ranges []IPv4Range
+	IPv6Ranges []IPv6Range
 }
 
 var DefaultProfile *PhantomProfile = nil
@@ -164,10 +178,23 @@ func (profile *PhantomProfile) GetInterface(name string) *PhantomInterface {
 	return DefaultInterface
 }
 
-func (profile *PhantomProfile) GetInterfaceByCIDR(ip netip.Addr) *PhantomInterface {
-	for k, i := range profile.CIDRMap {
-		if k.Contains(ip) {
-			return i
+func (profile *PhantomProfile) GetInterfaceByIP(ip net.IP) *PhantomInterface {
+	ip4 := ip.To4()
+	if ip4 != nil {
+		ip := binary.BigEndian.Uint32(ip4)
+		index := sort.Search(len(profile.IPv4Ranges), func(i int) bool {
+			return profile.IPv4Ranges[i].End > ip
+		})
+		if ip >= profile.IPv4Ranges[index].Start {
+			return profile.IPv4Ranges[index].Interface
+		}
+	} else {
+		ip := binary.BigEndian.Uint64(ip[:16])
+		index := sort.Search(len(profile.IPv6Ranges), func(i int) bool {
+			return profile.IPv6Ranges[i].End > ip
+		})
+		if ip >= profile.IPv6Ranges[index].Start {
+			return profile.IPv6Ranges[index].Interface
 		}
 	}
 
@@ -570,8 +597,23 @@ func LoadProfile(filename string) error {
 							DefaultProfile.DomainMap[addr.String()] = CurrentInterface
 						} else {
 							ipnet, err := netip.ParsePrefix(keys[0])
+
 							if err == nil {
-								DefaultProfile.CIDRMap[ipnet] = CurrentInterface
+								if ipnet.Addr().Is4() {
+									length := uint32(1) << (32 - ipnet.Bits())
+									start := binary.BigEndian.Uint32(ipnet.Masked().Addr().AsSlice())
+
+									DefaultProfile.IPv4Ranges = append(
+										DefaultProfile.IPv4Ranges,
+										IPv4Range{start, start + length, CurrentInterface})
+								} else if ipnet.Addr().Is6() {
+									length := uint64(1) << (64 - ipnet.Bits())
+									start := binary.BigEndian.Uint64(ipnet.Masked().Addr().AsSlice()[:16])
+
+									DefaultProfile.IPv6Ranges = append(
+										DefaultProfile.IPv6Ranges,
+										IPv6Range{start, start + length, CurrentInterface})
+								}
 							} else {
 								ip := net.ParseIP(keys[0])
 								if ip != nil {
@@ -593,7 +635,15 @@ func LoadProfile(filename string) error {
 		}
 	}
 
-	logPrintln(1, filename)
+	sort.SliceStable(DefaultProfile.IPv4Ranges, func(i, j int) bool {
+		return DefaultProfile.IPv4Ranges[i].Start < DefaultProfile.IPv4Ranges[j].Start
+	})
+
+	sort.SliceStable(DefaultProfile.IPv6Ranges, func(i, j int) bool {
+		return DefaultProfile.IPv6Ranges[i].Start < DefaultProfile.IPv6Ranges[j].Start
+	})
+
+	logPrintln(1, "Profile:", filename)
 
 	return nil
 }
@@ -704,7 +754,7 @@ function FindProxyForURL(url, host) {
 var InterfaceMap map[string]PhantomInterface
 
 func CreateInterfaces(Interfaces []InterfaceConfig) []string {
-	DefaultProfile = &PhantomProfile{DomainMap: make(map[string]*PhantomInterface), CIDRMap: make(map[netip.Prefix]*PhantomInterface)}
+	DefaultProfile = &PhantomProfile{DomainMap: make(map[string]*PhantomInterface), IPv4Ranges: nil, IPv6Ranges: nil}
 	InterfaceMap = make(map[string]PhantomInterface)
 
 	contains := func(a []string, x string) bool {

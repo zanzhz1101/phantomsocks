@@ -597,28 +597,29 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 				return proxy_err
 			}
 
-			if server.DNS != "" {
+			ip := net.ParseIP(host)
+			if ip == nil && server.DNS != "" {
 				_, ips := NSLookup(host, server.Hint, server.DNS)
 				logPrintln(1, host, ips)
 				if ips != nil {
-					ip := ips[rand.Intn(len(ips))]
-					ip4 := ip.To4()
-					if ip4 != nil {
-						copy(b[:], []byte{0x05, 0x01, 0x00, 0x01})
-						copy(b[4:], ip4[:4])
-						binary.BigEndian.PutUint16(b[8:], uint16(port))
-						n, err = conn.Write(b[:10])
-					} else {
-						copy(b[:], []byte{0x05, 0x01, 0x00, 0x04})
-						copy(b[4:], ip[:16])
-						binary.BigEndian.PutUint16(b[20:], uint16(port))
-						n, err = conn.Write(b[:22])
-					}
-					host = ""
+					ip = ips[rand.Intn(len(ips))]
 				}
 			}
 
-			if host != "" {
+			if ip != nil {
+				ip4 := ip.To4()
+				if ip4 != nil {
+					copy(b[:], []byte{0x05, 0x01, 0x00, 0x01})
+					copy(b[4:], ip4[:4])
+					binary.BigEndian.PutUint16(b[8:], uint16(port))
+					n, err = conn.Write(b[:10])
+				} else {
+					copy(b[:], []byte{0x05, 0x01, 0x00, 0x04})
+					copy(b[4:], ip[:16])
+					binary.BigEndian.PutUint16(b[20:], uint16(port))
+					n, err = conn.Write(b[:22])
+				}
+			} else {
 				copy(b[:], []byte{0x05, 0x01, 0x00, 0x03})
 				hostLen := len(host)
 				b[4] = byte(hostLen)

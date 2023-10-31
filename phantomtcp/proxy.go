@@ -278,12 +278,14 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 					return
 				}
 				domain = Nose[index]
+				addr.IP = nil
 			case VirtualAddrPrefix:
 				index := int(binary.BigEndian.Uint16(addr.IP[2:4]))
 				if index >= len(Nose) {
 					return
 				}
 				domain = Nose[index]
+				addr.IP = nil
 			}
 		}
 		port = addr.Port
@@ -320,7 +322,7 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 				header = b[:n]
 			}
 
-			if header[0] == 0x16 {
+			if addr.IP == nil && header[0] == 0x16 {
 				offset, length := GetSNI(header)
 				if length > 0 {
 					_domain := string(header[offset : offset+length])

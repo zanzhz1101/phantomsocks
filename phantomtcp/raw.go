@@ -56,125 +56,116 @@ func DevicePrint() {
 }
 
 func connectionMonitor(device string, ipv6 bool) {
-	start_monitor := func() error {
-		localaddr, err := GetLocalAddr(device, ipv6)
-		if err != nil {
-			logPrintln(1, device, err)
-			return err
-		}
-
-		var handle *net.IPConn
-		if ipv6 {
-			if localaddr == nil {
-				return nil
-			}
-			handle, err = net.ListenIP("ip6:tcp", &net.IPAddr{IP: localaddr.IP, Zone: ""})
-		} else {
-			if localaddr == nil {
-				return nil
-			}
-			handle, err = net.ListenIP("ip4:tcp", &net.IPAddr{IP: localaddr.IP, Zone: ""})
-		}
-
-		fmt.Printf("Device: %v (%s)\n", device, localaddr.IP.String())
-
-		if err != nil {
-			fmt.Printf("sockraw open failed: %v", err)
-			return err
-		}
-		defer handle.Close()
-
-		buf := make([]byte, 1500)
-		for {
-			n, addr, err := handle.ReadFrom(buf)
-			if err != nil {
-				logPrintln(1, err)
-				continue
-			}
-			if buf[13] != 18 {
-				continue
-			}
-
-			var tcp layers.TCP
-			tcp.DecodeFromBytes(buf[:n], gopacket.NilDecodeFeedback)
-			srcPort := tcp.DstPort
-			synAddr := net.JoinHostPort(addr.String(), strconv.Itoa(int(tcp.SrcPort)))
-			_, ok := ConnSyn.Load(synAddr)
-			if ok {
-				if ipv6 {
-					var ip layers.IPv6
-					ip.Version = 6
-					ip.TrafficClass = 5
-					ip.FlowLabel = 0
-					ip.Length = 0
-					ip.NextHeader = 6
-					ip.HopLimit = 64
-					ip.SrcIP = localaddr.IP
-					ip.DstIP = net.ParseIP(addr.String())
-					ip.HopByHop = nil
-
-					tcp.DstPort = tcp.SrcPort
-					tcp.SrcPort = srcPort
-					ack := tcp.Seq + 1
-					tcp.Seq = tcp.Ack - 1
-					tcp.Ack = ack
-
-					ch := ConnInfo6[srcPort]
-					connInfo := ConnectionInfo{nil, &ip, tcp}
-					go func(info *ConnectionInfo) {
-						select {
-						case ch <- info:
-						case <-time.After(time.Second * 2):
-						}
-					}(&connInfo)
-
-					buf = make([]byte, 1500)
-				} else {
-					var ip layers.IPv4
-					ip.Version = 4
-					ip.IHL = 5
-					ip.TOS = 0
-					ip.Length = 0
-					ip.Id = 0
-					ip.Flags = 0
-					ip.FragOffset = 0
-					ip.TTL = 64
-					ip.Protocol = 6
-					ip.Checksum = 0
-					ip.SrcIP = localaddr.IP
-					ip.DstIP = net.ParseIP(addr.String())
-					ip.Options = nil
-					ip.Padding = nil
-
-					tcp.DstPort = tcp.SrcPort
-					tcp.SrcPort = srcPort
-					ack := tcp.Seq + 1
-					tcp.Seq = tcp.Ack - 1
-					tcp.Ack = ack
-
-					ch := ConnInfo4[srcPort]
-					connInfo := ConnectionInfo{nil, &ip, tcp}
-					go func(info *ConnectionInfo) {
-						select {
-						case ch <- info:
-						case <-time.After(time.Second * 2):
-						}
-					}(&connInfo)
-
-					buf = make([]byte, 1500)
-				}
-			}
-		}
+	var err error
+	localaddr, err := GetLocalAddr(device, ipv6)
+	if err != nil {
+		logPrintln(1, device, err)
+		return
 	}
 
-	for {
-		err := start_monitor()
-		if err != nil {
-			logPrintln(1, device, err)
+	var handle *net.IPConn
+	if ipv6 {
+		if localaddr == nil {
+			logPrintln(1, "Device:", device, "no IPv6")
 			return
 		}
+		handle, err = net.ListenIP("ip6:tcp", &net.IPAddr{IP: localaddr.IP, Zone: ""})
+	} else {
+		if localaddr == nil {
+			logPrintln(1, "Device:", device, "no IPv4")
+			return
+		}
+		handle, err = net.ListenIP("ip4:tcp", &net.IPAddr{IP: localaddr.IP, Zone: ""})
+	}
 
-		time.Sleep(10000)
+	fmt.Printf("Device: %v (%s)\n", device, localaddr.IP.String())
+
+	if err != nil {
+		fmt.Printf("sockraw open failed: %v", err)
+		return
+	}
+	defer handle.Close()
+
+	buf := make([]byte, 1500)
+	for {
+		n, addr, err := handle.ReadFrom(buf)
+		if err != nil {
+			logPrintln(1, err)
+			continue
+		}
+		if buf[13] != 18 {
+			continue
+		}
+
+		var tcp layers.TCP
+		tcp.DecodeFromBytes(buf[:n], gopacket.NilDecodeFeedback)
+		srcPort := tcp.DstPort
+		synAddr := net.JoinHostPort(addr.String(), strconv.Itoa(int(tcp.SrcPort)))
+		_, ok := ConnSyn.Load(synAddr)
+		if ok {
+			if ipv6 {
+				var ip layers.IPv6
+				ip.Version = 6
+				ip.TrafficClass = 5
+				ip.FlowLabel = 0
+				ip.Length = 0
+				ip.NextHeader = 6
+				ip.HopLimit = 64
+				ip.SrcIP = localaddr.IP
+				ip.DstIP = net.ParseIP(addr.String())
+				ip.HopByHop = nil
+
+				tcp.DstPort = tcp.SrcPort
+				tcp.SrcPort = srcPort
+				ack := tcp.Seq + 1
+				tcp.Seq = tcp.Ack - 1
+				tcp.Ack = ack
+
+				ch := ConnInfo6[srcPort]
+				connInfo := ConnectionInfo{nil, &ip, tcp}
+				go func(info *ConnectionInfo) {
+					select {
+					case ch <- info:
+					case <-time.After(time.Second * 2):
+					}
+				}(&connInfo)
+
+				buf = make([]byte, 1500)
+			} else {
+				var ip layers.IPv4
+				ip.Version = 4
+				ip.IHL = 5
+				ip.TOS = 0
+				ip.Length = 0
+				ip.Id = 0
+				ip.Flags = 0
+				ip.FragOffset = 0
+				ip.TTL = 64
+				ip.Protocol = 6
+				ip.Checksum = 0
+				ip.SrcIP = localaddr.IP
+				ip.DstIP = net.ParseIP(addr.String())
+				ip.Options = nil
+				ip.Padding = nil
+
+				tcp.DstPort = tcp.SrcPort
+				tcp.SrcPort = srcPort
+				ack := tcp.Seq + 1
+				tcp.Seq = tcp.Ack - 1
+				tcp.Ack = ack
+
+				ch := ConnInfo4[srcPort]
+				connInfo := ConnectionInfo{nil, &ip, tcp}
+				go func(info *ConnectionInfo) {
+					select {
+					case ch <- info:
+					case <-time.After(time.Second * 2):
+					}
+				}(&connInfo)
+
+				buf = make([]byte, 1500)
+			}
+		}
 	}
 }
 

@@ -229,11 +229,13 @@ func StartService() {
 			fmt.Println("HTTP:", service.Address)
 			go ListenAndServe(service.Address, service.PrivateKey, ptcp.HTTPProxy)
 			default_proxy = "HTTP " + service.Address
+		case "socks5":
+			fallthrough
 		case "socks":
 			fmt.Println("Socks:", service.Address)
 			go ListenAndServe(service.Address, service.PrivateKey, ptcp.SocksProxy)
 			go ptcp.SocksUDPProxy(service.Address)
-			default_proxy = "SOCKS5 " + service.Address
+			default_proxy = strings.ToUpper(service.Protocol) + " " + service.Address
 		case "redirect":
 			fmt.Println("Redirect:", service.Address)
 			go ListenAndServe(service.Address, service.PrivateKey, ptcp.RedirectProxy)

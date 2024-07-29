@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -608,7 +609,8 @@ func (records *DNSRecords) PackAnswers(qtype int, minttl uint32) (int, []byte) {
 
 		count := 0
 		totalLen := 0
-		for _, ip := range rec.Addresses {
+		addresses := rec.Addresses
+		for _, ip := range addresses {
 			ip4 := ip.To4()
 			if ip4 != nil {
 				count++
@@ -621,7 +623,8 @@ func (records *DNSRecords) PackAnswers(qtype int, minttl uint32) (int, []byte) {
 
 		answers := make([]byte, totalLen)
 		length := 0
-		for _, ip := range rec.Addresses {
+		for i := 0; i < count; i++ {
+			ip := addresses[i]
 			ip4 := ip.To4()
 			if ip4 != nil {
 				copy(answers[length:], []byte{0xC0, 0x0C, 0x00, 1,
@@ -865,6 +868,7 @@ type ServerOptions struct {
 	Type      string
 	PD        string
 	Domain    string
+	Output    string
 	BadSubnet *net.IPNet
 	Fallback  net.IP
 }
@@ -884,6 +888,8 @@ func ParseOptions(options string) ServerOptions {
 				serverOpts.Type = key[1]
 			case "domain":
 				serverOpts.Domain = key[1]
+			case "output":
+				serverOpts.Output = key[1]
 			case "badsubnet":
 				_, serverOpts.BadSubnet, _ = net.ParseCIDR(key[1])
 			case "fallback":
@@ -1156,6 +1162,8 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 				return records.Index, records.BuildResponse(request, qtype, 60)
 			}
 			records.IPv4Hint = nil
+		} else if records.Index > 0 {
+			return records.Index, records.BuildResponse(request, qtype, 60)
 		}
 	case 28:
 		if records.IPv6Hint != nil {
@@ -1163,6 +1171,8 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 				return records.Index, records.BuildResponse(request, qtype, 60)
 			}
 			records.IPv6Hint = nil
+		} else if records.Index > 0 {
+			return records.Index, records.BuildResponse(request, qtype, 60)
 		}
 	case 65:
 		if records.ALPN&(HINT_ALPN|HINT_HTTP|HINT_HTTPS|HINT_HTTP3) != 0 {
@@ -1288,6 +1298,32 @@ func NSRequest(request []byte, cache bool) (uint32, []byte) {
 		records.Index = uint32(len(Nose))
 		Nose = append(Nose, name)
 		NoseLock.Unlock()
+
+		if options.Output != "" {
+			f, err := os.OpenFile(options.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+			if err != nil {
+				logPrintln(1, options.Output, err)
+			}
+			defer f.Close()
+
+			if _qtype == 1 {
+				if records.IPv4Hint.Addresses != nil {
+					f.WriteString(name + "=")
+					for _, ip := range records.IPv4Hint.Addresses {
+						f.WriteString(ip.String())
+					}
+					f.WriteString("\n")
+				}
+			} else if _qtype == 28 {
+				if records.IPv6Hint.Addresses != nil {
+					f.WriteString(name + "=")
+					for _, ip := range records.IPv6Hint.Addresses {
+						f.WriteString(ip.String())
+					}
+					f.WriteString("\n")
+				}
+			}
+		}
 	}
 
 	return records.Index, records.BuildResponse(request, qtype, 0)
@@ -1303,7 +1339,7 @@ func (server *PhantomInterface) ResolveTCPAddr(host string, port int) (*net.TCPA
 	if len(addrs) == 0 {
 		return nil, errors.New("no such host")
 	}
-	rand.Seed(time.Now().UnixNano())
+
 	return &net.TCPAddr{IP: addrs[rand.Intn(len(addrs))], Port: port}, nil
 }
 

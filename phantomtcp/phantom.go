@@ -21,6 +21,7 @@ type ServiceConfig struct {
 	Device     string `json:"device,omitempty"`
 	MTU        int    `json:"mtu,omitempty"`
 	Protocol   string `json:"protocol,omitempty"`
+	Method     string `json:"method,omitempty"`
 	Address    string `json:"address,omitempty"`
 	PrivateKey string `json:"privatekey,omitempty"`
 	Profile    string `json:"profile,omitempty"`
@@ -29,23 +30,27 @@ type ServiceConfig struct {
 }
 
 type InterfaceConfig struct {
-	Name    string `json:"name,omitempty"`
-	Device  string `json:"device,omitempty"`
-	DNS     string `json:"dns,omitempty"`
-	Hint    string `json:"hint,omitempty"`
-	MTU     int    `json:"mtu,omitempty"`
-	TTL     int    `json:"ttl,omitempty"`
-	MAXTTL  int    `json:"maxttl,omitempty"`
-	Timeout int    `json:"timeout,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Device string `json:"device,omitempty"`
+	DNS    string `json:"dns,omitempty"`
+	Hint   string `json:"hint,omitempty"`
+	MTU    int    `json:"mtu,omitempty"`
+	TTL    int    `json:"ttl,omitempty"`
+	MaxTTL int    `json:"maxttl,omitempty"`
 
 	Protocol   string `json:"protocol,omitempty"`
 	Address    string `json:"address,omitempty"`
+	PublicKey  string `json:"publickey,omitempty"`
 	PrivateKey string `json:"privatekey,omitempty"`
 
 	Peers []Peer `json:"peers,omitempty"`
+
+	Timeout  int    `json:"timeout,omitempty"`
+	Fallback string `json:"fallback,omitempty"`
 }
 
 type Peer struct {
+	Name         string `json:"name,omitempty"`
 	PublicKey    string `json:"publickey,omitempty"`
 	PreSharedKey string `json:"presharedkey,omitempty"`
 	Endpoint     string `json:"endpoint,omitempty"`
@@ -64,16 +69,19 @@ const (
 )
 
 type PhantomInterface struct {
-	Device  string
-	DNS     string
-	Hint    uint32
-	MTU     uint16
-	TTL     byte
-	MAXTTL  byte
-	Timeout uint16
+	Device string
+	DNS    string
+	Hint   uint32
+	MTU    uint16
+	TTL    byte
+	MaxTTL byte
 
-	Protocol byte
-	Address  string
+	Protocol      byte
+	Address       string
+	Authorization []byte
+
+	Timeout  uint16
+	Fallback *PhantomInterface
 }
 
 type IPv4Range struct {
@@ -200,7 +208,7 @@ func (profile *PhantomProfile) GetInterfaceByIP(ip net.IP) *PhantomInterface {
 		}
 	}
 
-	return nil
+	return DefaultInterface
 }
 
 /*
@@ -228,59 +236,88 @@ func GetHost(b []byte) (offset int, length int) {
 	return
 }
 
-func GetSNI(b []byte) (offset int, length int) {
-	offset = 11 + 32
-	if offset+1 > len(b) {
-		return 0, 0
+func GetHelloLength(header []byte) int {
+	headerLen := len(header)
+	offset := 11 + 32
+	if offset+1 > headerLen {
+		return 0
 	}
-	if b[0] != 0x16 {
-		return 0, 0
+	if header[0] != 0x16 {
+		return 0
 	}
-	Version := binary.BigEndian.Uint16(b[1:3])
+	Version := binary.BigEndian.Uint16(header[1:3])
 	if (Version & 0xFFF8) != 0x0300 {
-		return 0, 0
+		return 0
 	}
-	Length := binary.BigEndian.Uint16(b[3:5])
-	if len(b) <= int(Length)-5 {
-		return 0, 0
+	Length := binary.BigEndian.Uint16(header[3:5])
+	return int(Length)
+}
+
+func GetSNI(header []byte) (offset int, length int, ech bool) {
+	headerLen := len(header)
+	ech = false
+	offset = 11 + 32
+	if offset+1 > headerLen {
+		return 0, 0, false
 	}
-	SessionIDLength := b[offset]
+	if header[0] != 0x16 {
+		return 0, 0, false
+	}
+	Version := binary.BigEndian.Uint16(header[1:3])
+	if (Version & 0xFFF8) != 0x0300 {
+		return 0, 0, false
+	}
+	Length := binary.BigEndian.Uint16(header[3:5])
+	if headerLen <= int(Length)-5 {
+		return 0, 0, false
+	}
+	SessionIDLength := header[offset]
 	offset += 1 + int(SessionIDLength)
-	if offset+2 > len(b) {
-		return 0, 0
+	if offset+2 > headerLen {
+		return 0, 0, false
 	}
-	CipherSuitersLength := binary.BigEndian.Uint16(b[offset : offset+2])
+	CipherSuitersLength := binary.BigEndian.Uint16(header[offset : offset+2])
 	offset += 2 + int(CipherSuitersLength)
-	if offset >= len(b) {
-		return 0, 0
+	if offset >= headerLen {
+		return 0, 0, false
 	}
-	CompressionMethodsLenght := b[offset]
+	CompressionMethodsLenght := header[offset]
 	offset += 1 + int(CompressionMethodsLenght)
-	if offset+2 > len(b) {
-		return 0, 0
+	if offset+4 > headerLen {
+		return 0, 0, false
 	}
-	ExtensionsLength := binary.BigEndian.Uint16(b[offset : offset+2])
+	ExtensionsLength := binary.BigEndian.Uint16(header[offset : offset+2])
 	offset += 2
 	ExtensionsEnd := offset + int(ExtensionsLength)
-	if ExtensionsEnd > len(b) {
-		return 0, 0
+	if ExtensionsEnd > headerLen {
+		return 0, 0, false
 	}
 	for offset < ExtensionsEnd {
-		ExtensionType := binary.BigEndian.Uint16(b[offset : offset+2])
+		if offset+4 > headerLen {
+			return 0, 0, false
+		}
+		ExtensionType := binary.BigEndian.Uint16(header[offset : offset+2])
 		offset += 2
-		ExtensionLength := binary.BigEndian.Uint16(b[offset : offset+2])
+		ExtensionLength := binary.BigEndian.Uint16(header[offset : offset+2])
 		offset += 2
 		if ExtensionType == 0 {
+			if offset+5 > headerLen {
+				return 0, 0, ech
+			}
+			offset += 3
+			ServerNameLength := int(binary.BigEndian.Uint16(header[offset : offset+2]))
 			offset += 2
-			offset++
-			ServerNameLength := binary.BigEndian.Uint16(b[offset : offset+2])
-			offset += 2
-			return offset, int(ServerNameLength)
-		} else {
-			offset += int(ExtensionLength)
+			if offset+ServerNameLength >= headerLen {
+				return 0, 0, ech
+			}
+			return offset, ServerNameLength, ech
+		} else if ExtensionType == 65037 {
+			ech = true
 		}
+
+		offset += int(ExtensionLength)
 	}
-	return 0, 0
+	return 0, 0, ech
 }
 
 func GetQUICSNI(b []byte) string {
@@ -453,24 +490,6 @@ func (pface *PhantomInterface) DialStrip(host string, fronting string) (*tls.Con
 	return tls.Dial("tcp", addr.String(), conf)
 }
 
-func getMyIPv6() net.IP {
-	s, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil
-	}
-	for _, a := range s {
-		strIP := strings.SplitN(a.String(), "/", 2)
-		if strIP[1] == "128" && strIP[0] != "::1" {
-			ip := net.ParseIP(strIP[0])
-			ip4 := ip.To4()
-			if ip4 == nil {
-				return ip
-			}
-		}
-	}
-	return nil
-}
-
 func LoadProfile(filename string) error {
 	conf, err := os.Open(filename)
 	if err != nil {
@@ -480,10 +499,6 @@ func LoadProfile(filename string) error {
 
 	br := bufio.NewReader(conf)
 
-	default_interface, ok := InterfaceMap["default"]
-	if ok {
-		DefaultInterface = &default_interface
-	}
 	var CurrentInterface *PhantomInterface = &PhantomInterface{}
 
 	for {
@@ -529,8 +544,7 @@ func LoadProfile(filename string) error {
 							continue
 						} else {
 							ip := net.ParseIP(keys[0])
-							var records *DNSRecords
-							records = new(DNSRecords)
+							records := new(DNSRecords)
 							if CurrentInterface.Hint&HINT_MODIFY != 0 || CurrentInterface.Protocol != 0 {
 								records.Index = uint32(len(Nose))
 								records.ALPN = CurrentInterface.Hint & HINT_DNS
@@ -586,9 +600,9 @@ func LoadProfile(filename string) error {
 					}
 				} else {
 					if keys[0][0] == '[' {
-						face, ok := InterfaceMap[keys[0][1:len(keys[0])-1]]
+						pface, ok := InterfaceMap[keys[0][1:len(keys[0])-1]]
 						if ok {
-							CurrentInterface = &face
+							CurrentInterface = pface
 							logPrintln(1, keys[0], CurrentInterface)
 						} else {
 							logPrintln(1, keys[0], "invalid interface")
@@ -733,7 +747,7 @@ func GetPAC(address string, profile string) string {
 	for host := range DefaultProfile.DomainMap {
 		rule += fmt.Sprintf("\"%s\":1,\n", host)
 	}
-	Context := `var proxy = '%s';
+	Context := `var proxy = 'SOCKS %s';
 var rules = {
 %s}
 function FindProxyForURL(url, host) {
@@ -753,11 +767,11 @@ function FindProxyForURL(url, host) {
 	return fmt.Sprintf(Context, address, rule, SubdomainDepth)
 }
 
-var InterfaceMap map[string]PhantomInterface
+var InterfaceMap map[string]*PhantomInterface
 
 func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 	DefaultProfile = &PhantomProfile{DomainMap: make(map[string]*PhantomInterface), IPv4Ranges: nil, IPv6Ranges: nil}
-	InterfaceMap = make(map[string]PhantomInterface)
+	InterfaceMap = make(map[string]*PhantomInterface)
 
 	contains := func(a []string, x string) bool {
 		for _, n := range a {
@@ -769,9 +783,9 @@ func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 	}
 
 	var devices []string
-	for _, pface := range Interfaces {
+	for _, config := range Interfaces {
 		var Hint uint32 = HINT_NONE
-		for _, h := range strings.Split(pface.Hint, ",") {
+		for _, h := range strings.Split(config.Hint, ",") {
 			if h != "" {
 				hint, ok := HintMap[h]
 				if ok {
@@ -782,52 +796,81 @@ func CreateInterfaces(Interfaces []InterfaceConfig) []string {
 			}
 		}
 
-		var protocol byte
-		switch pface.Protocol {
-		case "direct":
-			protocol = DIRECT
-		case "redirect":
-			protocol = REDIRECT
-		case "nat64":
-			protocol = NAT64
-		case "http":
-			protocol = HTTP
-		case "https":
-			protocol = HTTPS
-		case "socks4":
-			protocol = SOCKS4
-		case "socks5":
-			protocol = SOCKS5
-		case "socks":
-			protocol = SOCKS5
-		}
+		pface := new(PhantomInterface)
+		pface.Device = config.Device
+		pface.DNS = config.DNS
+		pface.Hint = Hint
+		pface.MTU = uint16(config.MTU)
+		pface.TTL = byte(config.TTL)
+		pface.MaxTTL = byte(config.MaxTTL)
+		pface.Address = config.Address
+		pface.Timeout = 65535
+		pface.Fallback = nil
 
-		_, ok := InterfaceMap[pface.Device]
-		if !ok {
-			if pface.Device != "" && Hint != 0 && !contains(devices, pface.Device) {
-				devices = append(devices, pface.Device)
+		if config.Fallback != "" {
+			fallback, ok := InterfaceMap[config.Fallback]
+			if ok {
+				pface.Fallback = fallback
 			}
 		}
 
-		if pface.Timeout == 0 {
-			pface.Timeout = 65535
+		if config.Timeout > 0 {
+			pface.Timeout = uint16(config.Timeout)
 		}
 
-		InterfaceMap[pface.Name] = PhantomInterface{
-			Device:  pface.Device,
-			DNS:     pface.DNS,
-			Hint:    Hint,
-			MTU:     uint16(pface.MTU),
-			TTL:     byte(pface.TTL),
-			MAXTTL:  byte(pface.MAXTTL),
-			Timeout: uint16(pface.Timeout),
+		switch config.Protocol {
+		case "direct":
+			pface.Protocol = DIRECT
+		case "redirect":
+			pface.Protocol = REDIRECT
+		case "nat64":
+			pface.Protocol = NAT64
+		case "http":
+			pface.Protocol = HTTP
+			pface.Authorization = []byte(fmt.Sprintf("%s:%s\r\n", config.PublicKey, config.PrivateKey))
+		case "https":
+			pface.Protocol = HTTPS
+			pface.Authorization = []byte(fmt.Sprintf("%s:%s\r\n", config.PublicKey, config.PrivateKey))
+		case "socks4":
+			pface.Protocol = SOCKS4
+		case "socks5":
+			pface.Protocol = SOCKS5
+		case "socks":
+			pface.Protocol = SOCKS5
+		}
 
-			Protocol: protocol,
-			Address:  pface.Address,
+		InterfaceMap[config.Name] = pface
+
+		if pface.Device != "" && Hint != 0 {
+			_, ok := InterfaceMap[pface.Device]
+			if !ok && !contains(devices, pface.Device) {
+				devices = append(devices, pface.Device)
+			}
 		}
 	}
-	logPrintln(1, InterfaceMap)
+
+	default_interface, ok := InterfaceMap["default"]
+	if ok {
+		DefaultInterface = default_interface
+	} else {
+		logPrintln(1, "no default interface")
+	}
 
 	go ConnectionMonitor(devices)
 	return devices
+}
+
+func (config *ServiceConfig) StartService() {
+}
+
+func (config *InterfaceConfig) StartClient() error {
+	return nil
+}
+
+func (pface *PhantomInterface) DialTCP(address *net.TCPAddr) (net.Conn, error) {
+	return nil, nil
+}
+
+func (pface *PhantomInterface) DialUDP(address *net.UDPAddr) (net.Conn, error) {
+	return nil, nil
 }

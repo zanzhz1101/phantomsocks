@@ -3,6 +3,7 @@ package phantomtcp
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -156,6 +157,32 @@ func splitHostPort(hostport string) (host string, port int) {
 	return
 }
 
+func GetHeader(conn net.Conn) ([]byte, error) {
+	buf := make([]byte, 1460)
+	n, err := conn.Read(buf)
+	if err != nil || n == 0 {
+		return nil, err
+	}
+
+	if buf[0] == 0x16 {
+		headerLen := GetHelloLength(buf[:n]) + 5
+		if headerLen > 2440 {
+			return nil, errors.New("tls hello is too big")
+		}
+		if headerLen > n {
+			logPrintln(2, "tls big hello")
+			header := make([]byte, headerLen)
+			copy(header[:], buf[:n])
+			n, err = conn.Read(header[n:])
+			if err == nil {
+				return header, err
+			}
+		}
+	}
+
+	return buf[:n], err
+}
+
 func HTTPProxy(client net.Conn) {
 	defer client.Close()
 
@@ -208,28 +235,26 @@ func HTTPProxy(client net.Conn) {
 func SNIProxy(client net.Conn) {
 	defer client.Close()
 
-	var b [1460]byte
-	n, err := client.Read(b[:])
+	header, err := GetHeader(client)
 	if err != nil {
-		log.Println(err)
-		return
+		logPrintln(1, client.RemoteAddr(), err)
 	}
 
 	var host string
 	var port int
-	if b[0] == 0x16 {
-		offset, length := GetSNI(b[:n])
+	if header != nil && header[0] == 0x16 {
+		offset, length, _ := GetSNI(header)
 		if length == 0 {
 			return
 		}
-		host = string(b[offset : offset+length])
+		host = string(header[offset : offset+length])
 		port = 443
 	} else {
-		offset, length := GetHost(b[:n])
+		offset, length := GetHost(header)
 		if length == 0 {
 			return
 		}
-		host = string(b[offset : offset+length])
+		host = string(header[offset : offset+length])
 		portstart := strings.Index(host, ":")
 		if portstart == -1 {
 			port = 80
@@ -245,7 +270,7 @@ func SNIProxy(client net.Conn) {
 		}
 	}
 
-	tcp_redirect(client, &net.TCPAddr{Port: port}, host, b[:n])
+	tcp_redirect(client, &net.TCPAddr{Port: port}, host, header)
 }
 
 func RedirectProxy(client net.Conn) {
@@ -307,33 +332,57 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 			}
 
 			if header == nil {
-				b := make([]byte, 1460)
-				n, err := client.Read(b)
+				header, err = GetHeader(client)
 				if err != nil {
-					logPrintln(1, err)
+					logPrintln(1, domain, err)
 					return
 				}
-				header = b[:n]
 			}
 
-			if addr.IP == nil && header[0] == 0x16 {
-				offset, length := GetSNI(header)
+			if addr.IP == nil && header != nil && header[0] == 0x16 {
+				offset, length, ech := GetSNI(header)
 				if length > 0 {
-					_domain := string(header[offset : offset+length])
-					if domain != _domain {
-						pface = DefaultProfile.GetInterface(_domain)
-						if pface == nil {
-							return
+					sni := string(header[offset : offset+length])
+					if domain != sni {
+						if ech {
+							logPrintln(2, domain, "tls hello with ECH", sni)
+						} else {
+							pface = DefaultProfile.GetInterface(sni)
+							if pface == nil {
+								return
+							}
+							domain = sni
 						}
-						domain = _domain
 					}
 				}
 
 				logPrintln(1, "Redirect:", client.RemoteAddr(), "->", domain, port, pface)
-
 				conn, _, err = pface.Dial(domain, port, header)
+				if err == nil {
+					var server_hello [1500]byte
+					var helloLen int
+					err = conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(pface.Timeout)))
+					if err == nil {
+						helloLen, err = conn.Read(server_hello[:])
+					}
+					if err == nil {
+						conn.SetReadDeadline(time.Time{})
+						_, err := client.Write(server_hello[:helloLen])
+						if err != nil {
+							logPrintln(2, domain, err)
+							return
+						}
+					}
+				}
+
+				if err != nil && pface.Fallback != nil {
+					pface = pface.Fallback
+					logPrintln(1, "Redirect:", client.RemoteAddr(), "->", domain, port, pface)
+					conn, _, err = pface.Dial(domain, port, header)
+				}
+
 				if err != nil {
-					logPrintln(1, domain, err)
+					logPrintln(2, domain, err)
 					return
 				}
 			} else {
@@ -367,8 +416,14 @@ func tcp_redirect(client net.Conn, addr *net.TCPAddr, domain string, header []by
 				} else {
 					var info *ConnectionInfo
 					conn, info, err = pface.Dial(domain, port, header)
+					if err != nil && pface.Fallback != nil {
+						pface = pface.Fallback
+						logPrintln(1, "Redirect:", client.RemoteAddr(), "->", domain, port, pface)
+						conn, _, err = pface.Dial(domain, port, header)
+					}
+
 					if err != nil {
-						logPrintln(1, domain, err)
+						logPrintln(2, domain, err)
 						return
 					}
 
@@ -583,6 +638,10 @@ func SocksUDPProxy(address string) {
 			} else {
 				logPrintln(1, "Socks4U:", srcAddr, "->", dstAddr)
 				remoteConn, err = net.DialUDP("udp", nil, &dstAddr)
+				if err != nil {
+					logPrintln(1, err)
+					continue
+				}
 				_, err = remoteConn.Write(data[8:n])
 			}
 
@@ -609,6 +668,77 @@ func SocksUDPProxy(address string) {
 			}(*srcAddr, remoteConn, key)
 		default:
 			continue
+		}
+	}
+}
+
+func Netcat(client net.Conn) {
+	defer client.Close()
+
+	for {
+		var b [1460]byte
+		n, err := client.Read(b[:])
+		if err != nil {
+			logPrintln(2, client.RemoteAddr(), err)
+			return
+		}
+		if n == 0 {
+			return
+		}
+
+		cmd := strings.Fields(string(b[:n]))
+		if len(cmd) > 0 {
+			log.Println(client.RemoteAddr(), cmd)
+			cmdlen := len(cmd)
+			switch cmd[0] {
+			case "host":
+				if cmdlen > 1 {
+					domain := cmd[1]
+					pface := DefaultProfile.GetInterface(domain)
+					_, addrs := NSLookup(domain, pface.Hint, pface.DNS)
+					for _, addr := range addrs {
+						client.Write([]byte(addr.String() + "\n"))
+					}
+				}
+			case "load":
+				if cmdlen > 1 {
+					err := LoadProfile(cmd[1])
+					if err != nil {
+						logPrintln(1, err)
+					}
+				}
+			case "flush":
+				if cmdlen > 1 {
+					if cmd[1] == "all" {
+						flush_all := func(key, value interface{}) bool {
+							record, ok := value.(*DNSRecords)
+							if ok {
+								if record.IPv4Hint.TTL != 0 {
+									record.IPv4Hint = nil
+								}
+								if record.IPv6Hint.TTL != 0 {
+									record.IPv6Hint = nil
+								}
+							}
+							return false
+						}
+						DNSCache.Range(flush_all)
+					} else {
+						value, ok := DNSCache.Load(cmd[1])
+						if ok {
+							record, ok := value.(*DNSRecords)
+							if ok {
+								if record.IPv4Hint.TTL != 0 {
+									record.IPv4Hint = nil
+								}
+								if record.IPv6Hint.TTL != 0 {
+									record.IPv6Hint = nil
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 }

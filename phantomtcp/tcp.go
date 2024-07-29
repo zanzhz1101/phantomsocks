@@ -1,12 +1,14 @@
 package phantomtcp
 
 import (
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
+	mathrand "math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -116,7 +118,6 @@ func GetLocalAddr(name string, ipv6 bool) (*net.TCPAddr, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	addrs, _ := inf.Addrs()
 	for _, addr := range addrs {
 		localAddr, ok := addr.(*net.IPNet)
@@ -147,6 +148,7 @@ func GetLocalAddr(name string, ipv6 bool) (*net.TCPAddr, error) {
 }
 
 func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, *ConnectionInfo, error) {
+	connect_err := errors.New("connection does not exist")
 	raddrs, err := pface.GetRemoteAddresses(host, port)
 	if err != nil || raddrs == nil {
 		return nil, nil, err
@@ -154,26 +156,10 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 
 	var conn net.Conn
 	device := pface.Device
-	offset := 0
-	length := 0
+	hint := pface.Hint
 
-	if b != nil {
-		if pface.Hint&HINT_MODIFY != 0 {
-			if pface.Hint&HINT_TFO != 0 {
-				length = len(b)
-			} else {
-				if b[0] == 0x16 {
-					offset, length = GetSNI(b)
-				} else {
-					offset, length = GetHost(b)
-				}
-			}
-		}
-	}
-
-	if PassiveMode || length == 0 {
-		raddr := raddrs[rand.Intn(len(raddrs))]
-
+	if hint&HINT_MODIFY == 0 {
+		raddr := raddrs[mathrand.Intn(len(raddrs))]
 		var laddr *net.TCPAddr = nil
 		if device != "" {
 			laddr, err = GetLocalAddr(device, raddr.IP.To4() == nil)
@@ -183,202 +169,253 @@ func (pface *PhantomInterface) Dial(host string, port int, b []byte) (net.Conn, 
 		}
 
 		conn, err = net.DialTCP("tcp", laddr, raddr)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if pface.Protocol != 0 {
-			pface.ProxyHandshake(conn, nil, host, port)
-			if err != nil {
-				conn.Close()
-				return nil, nil, err
+		if err == nil {
+			if pface.Protocol != 0 {
+				err = pface.ProxyHandshake(conn, nil, host, port)
+				if err != nil {
+					conn.Close()
+					return nil, nil, err
+				}
 			}
-		}
 
-		if b != nil {
-			if length > 0 {
-				cut := offset + length/2
-				tos := 1 << 2
-				if pface.Hint&HINT_TTL != 0 {
-					tos = int(pface.TTL) << 2
-				}
-				err = SendWithOption(conn, b[:cut], tos, 1)
-				if err != nil {
-					conn.Close()
-				}
-				_, err = conn.Write(b[cut:])
-				if err != nil {
-					conn.Close()
-				}
-			} else {
+			if b != nil {
 				_, err = conn.Write(b)
-				if err != nil {
-					conn.Close()
-				}
 			}
 		}
 
 		return conn, nil, err
 	} else {
-		rand.Seed(time.Now().UnixNano())
+		offset := 0
+		length := 0
 
-		fakepaylen := 1280
-		if len(b) < fakepaylen {
-			fakepaylen = len(b)
-		}
-		fakepayload := make([]byte, fakepaylen)
-		copy(fakepayload, b[:fakepaylen])
-
-		cut := offset + length/2
-		var tfo_payload []byte = nil
-		if (pface.Hint & (HINT_TFO | HINT_HTFO)) != 0 {
-			if (pface.Hint & HINT_TFO) != 0 {
-				tfo_payload = b
+		if b != nil {
+			if hint&HINT_TFO != 0 {
+				length = len(b)
 			} else {
-				tfo_payload = b[:cut]
+				if b[0] == 0x16 {
+					offset, length, _ = GetSNI(b)
+				} else {
+					offset, length = GetHost(b)
+				}
 			}
-		} else if pface.Hint&HINT_RAND != 0 {
-			_, err = rand.Read(fakepayload)
-			if err != nil {
-				logPrintln(1, err)
+		}
+
+		send_magic_packet := func(connInfo *ConnectionInfo, payload []byte, hint uint32, ttl uint8, count int) error {
+			var mss uint32 = 1220
+			var segment uint32 = 0
+			var totalLen uint32 = uint32(len(payload))
+			initSeq := connInfo.TCP.Seq
+			for totalLen-segment > 1220 {
+				err := ModifyAndSendPacket(connInfo, payload[segment:segment+mss], hint, ttl, count)
+				if err != nil {
+					return err
+				}
+				segment += mss
+				connInfo.TCP.Seq += mss
+				time.Sleep(10 * time.Millisecond)
 			}
-		} else {
-			min_dot := offset + length
-			max_dot := offset
-			for i := offset; i < offset+length; i++ {
-				if fakepayload[i] == '.' {
-					if i < min_dot {
-						min_dot = i
+			err = ModifyAndSendPacket(connInfo, payload[segment:], hint, ttl, count)
+			connInfo.TCP.Seq = initSeq
+			time.Sleep(10 * time.Millisecond)
+			return err
+		}
+
+		if PassiveMode {
+			raddr := raddrs[mathrand.Intn(len(raddrs))]
+
+			var laddr *net.TCPAddr = nil
+			if device != "" {
+				laddr, err = GetLocalAddr(device, raddr.IP.To4() == nil)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+
+			conn, err = net.DialTCP("tcp", laddr, raddr)
+			if err == nil && pface.Protocol != 0 {
+				err = pface.ProxyHandshake(conn, nil, host, port)
+			}
+
+			if err == nil && b != nil {
+				if length > 0 {
+					cut := offset + length/2
+					tos := 1 << 2
+					if hint&HINT_TTL != 0 {
+						tos = int(pface.TTL) << 2
 					}
-					if i > max_dot {
-						max_dot = i
+					if SendWithOption(conn, b[:cut], tos, 1) == nil {
+						_, err = conn.Write(b[cut:])
 					}
 				} else {
-					fakepayload[i] = domainBytes[rand.Intn(len(domainBytes))]
+					_, err = conn.Write(b)
 				}
 			}
-			if min_dot == max_dot {
-				min_dot = offset
-			}
 
-			cut = (min_dot + max_dot) / 2
-		}
-
-		var synpacket *ConnectionInfo
-		for i := 0; i < len(raddrs); i++ {
-			//raddr := raddrs[rand.Intn(len(raddrs))]
-			raddr := raddrs[i]
-
-			laddr, err := GetLocalAddr(device, raddr.IP.To4() == nil)
-			if err != nil {
-				return nil, nil, errors.New("invalid device")
-			}
-
-			conn, synpacket, err = DialConnInfo(laddr, raddr, pface, tfo_payload)
-			if err != nil {
-				if IsNormalError(err) {
-					continue
-				}
-				return nil, nil, err
-			}
-
-			break
-		}
-
-		if synpacket == nil {
-			if conn != nil {
-				conn.Close()
-			}
-			return nil, nil, errors.New("connection does not exist")
-		}
-
-		logPrintln(3, host, conn.RemoteAddr(), "connected")
-
-		if (pface.Hint & HINT_DELAY) != 0 {
-			time.Sleep(time.Second)
-		}
-
-		synpacket.TCP.Seq++
-
-		if pface.Protocol != 0 {
-			err = pface.ProxyHandshake(conn, synpacket, host, port)
 			if err != nil {
 				conn.Close()
 				return nil, nil, err
 			}
-			if pface.Protocol == HTTPS {
-				conn.Write(b)
-				return conn, synpacket, nil
-			}
-		}
 
-		count := 1
-		if (pface.Hint & (HINT_TFO | HINT_HTFO)) != 0 {
-			if (pface.Hint & HINT_HTFO) != 0 {
+			return conn, nil, err
+		} else {
+			if offset == 0 {
+				length = len(b)
+				hint |= HINT_RAND
+			}
+
+			fakepaylen := len(b)
+			fakepayload := make([]byte, fakepaylen)
+			copy(fakepayload, b[:fakepaylen])
+
+			cut := offset + length/2
+			var tfo_payload []byte = nil
+			if (hint & (HINT_TFO | HINT_HTFO)) != 0 {
+				if (hint & HINT_TFO) != 0 {
+					tfo_payload = b
+				} else {
+					tfo_payload = b[:cut]
+				}
+			} else if hint&HINT_RAND != 0 {
+				_, err = rand.Read(fakepayload)
+				if err != nil {
+					logPrintln(1, err)
+				}
+			} else {
+				min_dot := offset + length
+				max_dot := offset
+				for i := offset; i < offset+length; i++ {
+					if fakepayload[i] == '.' {
+						if i < min_dot {
+							min_dot = i
+						}
+						if i > max_dot {
+							max_dot = i
+						}
+					} else {
+						fakepayload[i] = domainBytes[mathrand.Intn(len(domainBytes))]
+					}
+				}
+				if min_dot == max_dot {
+					min_dot = offset
+				}
+
+				cut = (min_dot + max_dot) / 2
+			}
+
+			var synpacket *ConnectionInfo
+			for i := 0; i < len(raddrs); i++ {
+				raddr := raddrs[i]
+				laddr, err := GetLocalAddr(device, raddr.IP.To4() == nil)
+				if err != nil {
+					return nil, nil, errors.New("invalid device")
+				}
+
+				conn, synpacket, err = DialConnInfo(laddr, raddr, pface, tfo_payload)
+				if err != nil {
+					if IsNormalError(err) {
+						continue
+					}
+					return nil, nil, err
+				}
+
+				break
+			}
+
+			if synpacket == nil {
+				if conn != nil {
+					conn.Close()
+				}
+				return nil, nil, connect_err
+			}
+
+			logPrintln(3, host, conn.RemoteAddr(), "connected")
+
+			if (hint & HINT_DELAY) != 0 {
+				time.Sleep(time.Second)
+			}
+
+			synpacket.TCP.Seq++
+
+			if pface.Protocol != 0 {
+				err = pface.ProxyHandshake(conn, synpacket, host, port)
+				if err != nil {
+					conn.Close()
+					return nil, nil, err
+				}
+				if pface.Protocol == HTTPS {
+					conn.Write(b)
+					return conn, synpacket, nil
+				}
+			}
+
+			count := 1
+			if (hint & (HINT_TFO | HINT_HTFO)) != 0 {
+				if (hint & HINT_HTFO) != 0 {
+					_, err = conn.Write(b[cut:])
+					if err != nil {
+						conn.Close()
+						return nil, nil, err
+					}
+				}
+				synpacket.TCP.Seq += uint32(len(b))
+			} else {
+				if hint&HINT_MODE2 != 0 {
+					synpacket.TCP.Seq += uint32(cut)
+					fakepayload = fakepayload[cut:]
+					count = 2
+				} else {
+					err = send_magic_packet(synpacket, fakepayload, hint, pface.TTL, count)
+					if err != nil {
+						conn.Close()
+						return nil, nil, err
+					}
+				}
+
+				SegOffset := 0
+				if hint&(HINT_SSEG|HINT_1SEG) != 0 {
+					if hint&HINT_1SEG != 0 {
+						SegOffset = 1
+					} else {
+						SegOffset = 4
+					}
+					_, err = conn.Write(b[:SegOffset])
+					if err != nil {
+						conn.Close()
+						return nil, nil, err
+					}
+				}
+
+				_, err = conn.Write(b[SegOffset:cut])
+				if err != nil {
+					conn.Close()
+					return nil, nil, err
+				}
+
+				err = send_magic_packet(synpacket, fakepayload, hint, pface.TTL, count)
+				if err != nil {
+					conn.Close()
+					return nil, nil, err
+				}
+
 				_, err = conn.Write(b[cut:])
 				if err != nil {
 					conn.Close()
 					return nil, nil, err
 				}
-			}
-			synpacket.TCP.Seq += uint32(len(b))
-		} else {
-			if pface.Hint&HINT_MODE2 != 0 {
-				synpacket.TCP.Seq += uint32(cut)
-				fakepayload = fakepayload[cut:]
-				count = 2
-			} else {
-				err = ModifyAndSendPacket(synpacket, fakepayload, pface.Hint, pface.TTL, count)
-				if err != nil {
-					conn.Close()
-					return nil, nil, err
+
+				synpacket.TCP.Seq += uint32(len(b))
+				if hint&HINT_SAT != 0 {
+					_, err = rand.Read(fakepayload)
+					if err != nil {
+						conn.Close()
+						return nil, nil, err
+					}
+					err = send_magic_packet(synpacket, fakepayload, hint, pface.TTL, 2)
 				}
 			}
 
-			SegOffset := 0
-			if pface.Hint&(HINT_SSEG|HINT_1SEG) != 0 {
-				if pface.Hint&HINT_1SEG != 0 {
-					SegOffset = 1
-				} else {
-					SegOffset = 4
-				}
-				_, err = conn.Write(b[:SegOffset])
-				if err != nil {
-					conn.Close()
-					return nil, nil, err
-				}
-			}
-
-			_, err = conn.Write(b[SegOffset:cut])
-			if err != nil {
-				conn.Close()
-				return nil, nil, err
-			}
-
-			err = ModifyAndSendPacket(synpacket, fakepayload, pface.Hint, pface.TTL, count)
-			if err != nil {
-				conn.Close()
-				return nil, nil, err
-			}
-
-			_, err = conn.Write(b[cut:])
-			if err != nil {
-				conn.Close()
-				return nil, nil, err
-			}
-
-			synpacket.TCP.Seq += uint32(len(b))
-			if pface.Hint&HINT_SAT != 0 {
-				_, err = rand.Read(fakepayload)
-				if err != nil {
-					conn.Close()
-					return nil, nil, err
-				}
-				err = ModifyAndSendPacket(synpacket, fakepayload, pface.Hint, pface.TTL, 2)
-			}
+			return conn, synpacket, err
 		}
-
-		return conn, synpacket, err
 	}
 }
 
@@ -453,18 +490,23 @@ func (server *PhantomInterface) GetRemoteAddresses(host string, port int) ([]*ne
 	}
 }
 
-func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *ConnectionInfo, host string, port int) error {
+func (pface *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *ConnectionInfo, host string, port int) error {
 	var err error
 	proxy_err := errors.New("invalid proxy")
 
-	hint := server.Hint & HINT_MODIFY
+	hint := pface.Hint & HINT_MODIFY
 	var proxy_seq uint32 = 0
-	switch server.Protocol {
+	switch pface.Protocol {
 	case REDIRECT:
 	case NAT64:
 	case HTTP:
 		{
-			request := []byte(fmt.Sprintf("CONNECT %s HTTP/1.1\r\n\r\n", net.JoinHostPort(host, string(port))))
+			header := fmt.Sprintf("CONNECT %s HTTP/1.1\r\n", net.JoinHostPort(host, strconv.Itoa(port)))
+			if pface.Authorization != nil {
+				header += fmt.Sprintf("Authorization: Basic %s\r\n", base64.RawURLEncoding.EncodeToString(pface.Authorization))
+			}
+			header += "\r\n"
+			request := []byte(header)
 			fakepayload := make([]byte, len(request))
 			var n int = 0
 			if synpacket != nil {
@@ -481,7 +523,7 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 				}
 
 				proxy_seq += uint32(n)
-				err = ModifyAndSendPacket(synpacket, fakepayload, hint, server.TTL, 2)
+				err = ModifyAndSendPacket(synpacket, fakepayload, hint, pface.TTL, 2)
 				if err != nil {
 					return err
 				}
@@ -513,7 +555,7 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 		{
 			var b [264]byte
 			if synpacket != nil {
-				err := ModifyAndSendPacket(synpacket, b[:], hint, server.TTL, 2)
+				err := ModifyAndSendPacket(synpacket, b[:], hint, pface.TTL, 2)
 				if err != nil {
 					return err
 				}
@@ -522,8 +564,12 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 				InsecureSkipVerify: true,
 			}
 			conn = tls.Client(conn, conf)
-			request := []byte(fmt.Sprintf("CONNECT %s HTTP/1.1\r\n\r\n",
-				net.JoinHostPort(host, string(port))))
+			header := fmt.Sprintf("CONNECT %s HTTP/1.1\r\n", net.JoinHostPort(host, strconv.Itoa(port)))
+			if pface.Authorization != nil {
+				header += fmt.Sprintf("Authorization: Basic %s\r\n", base64.RawURLEncoding.EncodeToString(pface.Authorization))
+			}
+			header += "\r\n"
+			request := []byte(header)
 			n, err := conn.Write(request)
 			if err != nil || n == 0 {
 				return err
@@ -538,7 +584,7 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 		{
 			var b [264]byte
 			if synpacket != nil {
-				err := ModifyAndSendPacket(synpacket, b[:], hint, server.TTL, 2)
+				err := ModifyAndSendPacket(synpacket, b[:], hint, pface.TTL, 2)
 				if err != nil {
 					return err
 				}
@@ -577,7 +623,7 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 		{
 			var b [264]byte
 			if synpacket != nil {
-				err := ModifyAndSendPacket(synpacket, b[:], hint, server.TTL, 2)
+				err := ModifyAndSendPacket(synpacket, b[:], hint, pface.TTL, 2)
 				if err != nil {
 					return err
 				}
@@ -597,29 +643,27 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 				return proxy_err
 			}
 
-			ip := net.ParseIP(host)
-			if ip == nil && server.DNS != "" {
-				_, ips := NSLookup(host, server.Hint, server.DNS)
-				logPrintln(1, host, ips)
+			if pface.DNS != "" {
+				_, ips := NSLookup(host, pface.Hint, pface.DNS)
 				if ips != nil {
-					ip = ips[rand.Intn(len(ips))]
+					ip := ips[mathrand.Intn(len(ips))]
+					ip4 := ip.To4()
+					if ip4 != nil {
+						copy(b[:], []byte{0x05, 0x01, 0x00, 0x01})
+						copy(b[4:], ip4[:4])
+						binary.BigEndian.PutUint16(b[8:], uint16(port))
+						n, err = conn.Write(b[:10])
+					} else {
+						copy(b[:], []byte{0x05, 0x01, 0x00, 0x04})
+						copy(b[4:], ip[:16])
+						binary.BigEndian.PutUint16(b[20:], uint16(port))
+						n, err = conn.Write(b[:22])
+					}
+					host = ""
 				}
 			}
 
-			if ip != nil {
-				ip4 := ip.To4()
-				if ip4 != nil {
-					copy(b[:], []byte{0x05, 0x01, 0x00, 0x01})
-					copy(b[4:], ip4[:4])
-					binary.BigEndian.PutUint16(b[8:], uint16(port))
-					n, err = conn.Write(b[:10])
-				} else {
-					copy(b[:], []byte{0x05, 0x01, 0x00, 0x04})
-					copy(b[4:], ip[:16])
-					binary.BigEndian.PutUint16(b[20:], uint16(port))
-					n, err = conn.Write(b[:22])
-				}
-			} else {
+			if host != "" {
 				copy(b[:], []byte{0x05, 0x01, 0x00, 0x03})
 				hostLen := len(host)
 				b[4] = byte(hostLen)
@@ -631,18 +675,14 @@ func (server *PhantomInterface) ProxyHandshake(conn net.Conn, synpacket *Connect
 			if err != nil {
 				return err
 			}
+
 			proxy_seq += uint32(n)
+
 			n, err = conn.Read(b[:])
 			if err != nil {
 				return err
 			}
-			if n < 2 {
-				return proxy_err
-			}
-			if b[0] != 0x05 {
-				return proxy_err
-			}
-			if b[1] != 0x00 {
+			if n < 2 || b[0] != 0x05 || b[1] != 0x00 {
 				return proxy_err
 			}
 		}

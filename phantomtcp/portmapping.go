@@ -127,7 +127,8 @@ func UDPMapping(Address string, Target string) error {
 
 	localPort, err := strconv.Atoi(Address)
 	if err == nil {
-		localConn, err := net.ListenUDP("udp", &net.UDPAddr{net.IP{127, 0, 0, 1}, localPort, ""})
+		serverAddr := net.UDPAddr{IP: net.IP{127, 0, 0, 1}, Port: localPort, Zone: ""}
+		localConn, err := net.ListenUDP("udp", &serverAddr)
 		if err != nil {
 			return err
 		}
@@ -158,7 +159,7 @@ func UDPMapping(Address string, Target string) error {
 			n, SrcAddr, err = localConn.ReadFromUDP(data)
 			if err != nil {
 				SrcAddr = nil
-				log.Println(err)
+				logPrintln(1, err)
 				continue
 			}
 			conn.Write(data[:n])
@@ -178,7 +179,7 @@ func UDPMapping(Address string, Target string) error {
 		for {
 			n, clientAddr, err := localConn.ReadFromUDP(data)
 			if err != nil {
-				log.Println(err)
+				logPrintln(1, err)
 				continue
 			}
 
@@ -201,7 +202,7 @@ func UDPMapping(Address string, Target string) error {
 				_, err = remoteConn.Write(data[:n])
 				UDPLock.Unlock()
 				if err != nil {
-					log.Println(err)
+					logPrintln(1, err)
 					continue
 				}
 
@@ -224,8 +225,6 @@ func UDPMapping(Address string, Target string) error {
 			}
 		}
 	}
-
-	return nil
 }
 
 func TCPMapping(Listener net.Listener, Hosts string) error {

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -149,7 +149,7 @@ func StartService() {
 		return
 	}
 
-	bytes, err := ioutil.ReadAll(conf)
+	bytes, err := io.ReadAll(conf)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -188,6 +188,7 @@ func StartService() {
 			return
 		}
 	}
+
 	if ServiceConfig.HostsFile != "" {
 		err := ptcp.LoadHosts(ServiceConfig.HostsFile)
 		if err != nil {

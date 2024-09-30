@@ -1,0 +1,71 @@
+name: Build
+
+on: workflow_dispatch
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      run: git clone https://github.com/peasoft/phantomsocks.git .
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.19
+
+    - name: Build
+      run: |
+        sudo apt update && sudo apt install -y libpcap-dev
+        go build -v
+        go build -v -tags rawsocket
+    
+    - name: Upload
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-linux
+        path: phantomsocks
+  
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout
+      run: git clone https://github.com/peasoft/phantomsocks.git .
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.19
+
+    - name: Build
+      run: |
+        go build -v
+        go build -v -tags windivert
+    
+    - name: Upload
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-windows
+        path: phantomsocks.exe
+  
+  build-macos:
+    runs-on: macos-latest
+    steps:
+    - name: Checkout
+      run: git clone https://github.com/peasoft/phantomsocks.git .
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.19
+
+    - name: Build
+      run: |
+        go build -v
+        go build -v -tags pcap
+    
+    - name: Upload
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-macos
+        path: phantomsocks
